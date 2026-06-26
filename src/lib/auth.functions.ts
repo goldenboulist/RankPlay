@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { hash, compare } from "@node-rs/bcrypt";
+import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { SignJWT } from "jose";
 import { getDb } from "./db.server";
 
@@ -15,6 +15,19 @@ async function signToken(userId: string): Promise<string> {
     .setIssuedAt()
     .setExpirationTime(JWT_EXPIRY)
     .sign(JWT_SECRET);
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString("hex");
+  const hash = createHash("sha256").update(salt + password).digest("hex");
+  return `${salt}:${hash}`;
+}
+
+// Remplace bcrypt.compare
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [salt, hash] = stored.split(":");
+  const attempt = createHash("sha256").update(salt + password).digest("hex");
+  return timingSafeEqual(Buffer.from(hash), Buffer.from(attempt));
 }
 
 // ── Register ──────────────────────────────────────────────────────────────────
@@ -32,7 +45,7 @@ export const registerFn = createServerFn({ method: "POST" })
     console.log("[register] data reçu:", JSON.stringify(data));
     try {
       const db = getDb();
-      const passwordHash = await hash(data.password, 10);
+      const passwordHash = await hashPassword(data.password);
       console.log("[register] hash ok");
       // Check duplicate email
       const [existing] = await db.execute(
@@ -95,7 +108,7 @@ export const loginFn = createServerFn({ method: "POST" })
 
     if (!user) throw new Error("Invalid email or password.");
 
-    const valid = await compare(data.password, user.password_hash);
+    const valid = await verifyPassword(data.password, user.password_hash);
     if (!valid) throw new Error("Invalid email or password.");
 
     const token = await signToken(user.id);
