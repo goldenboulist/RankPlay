@@ -29,6 +29,7 @@ export const registerFn = createServerFn({ method: "POST" })
       .parse(d)
   )
   .handler(async ({ data }) => {
+    console.log("[register] data reçu:", JSON.stringify(data));
     const db = getDb();
 
     // Check duplicate email
