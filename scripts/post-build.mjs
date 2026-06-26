@@ -6,7 +6,10 @@ const content = `process.on("uncaughtException", function(e) {
   process.exit(1);
 });
 
-import("./.output/server/index.mjs").catch(function(e) {
+const path = require("path");
+const entry = path.join(__dirname, "server", "index.mjs");
+
+import(entry).catch(function(e) {
   if (e.code !== "EEXIST") {
     console.error(e);
     process.exit(1);
