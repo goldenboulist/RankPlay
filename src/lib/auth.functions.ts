@@ -30,36 +30,41 @@ export const registerFn = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     console.log("[register] data reçu:", JSON.stringify(data));
-    const db = getDb();
+    try {
+      const db = getDb();
+      const passwordHash = await bcrypt.hash(data.password, 10);
+      console.log("[register] hash ok");
+      // Check duplicate email
+      const [existing] = await db.execute(
+        "SELECT id FROM users WHERE email = ? LIMIT 1",
+        [data.email]
+      );
+      if ((existing as unknown[]).length > 0) {
+        throw new Error("An account with this email already exists.");
+      }
 
-    // Check duplicate email
-    const [existing] = await db.execute(
-      "SELECT id FROM users WHERE email = ? LIMIT 1",
-      [data.email]
-    );
-    if ((existing as unknown[]).length > 0) {
-      throw new Error("An account with this email already exists.");
+      const displayName = data.display_name || data.email.split("@")[0];
+
+      await db.execute(
+        "INSERT INTO users (email, password_hash, display_name) VALUES (?, ?, ?)",
+        [data.email, passwordHash, displayName]
+      );
+
+      const [rows] = await db.execute(
+        "SELECT id FROM users WHERE email = ? LIMIT 1",
+        [data.email]
+      );
+      const userId = (rows as { id: string }[])[0].id;
+
+      const token = await signToken(userId);
+      return {
+        token,
+        user: { id: userId, email: data.email, display_name: displayName },
+      };
+    } catch (e) {
+      console.error("[register] ERREUR:", e);
+      throw e;
     }
-
-    const passwordHash = await bcrypt.hash(data.password, 10);
-    const displayName = data.display_name || data.email.split("@")[0];
-
-    await db.execute(
-      "INSERT INTO users (email, password_hash, display_name) VALUES (?, ?, ?)",
-      [data.email, passwordHash, displayName]
-    );
-
-    const [rows] = await db.execute(
-      "SELECT id FROM users WHERE email = ? LIMIT 1",
-      [data.email]
-    );
-    const userId = (rows as { id: string }[])[0].id;
-
-    const token = await signToken(userId);
-    return {
-      token,
-      user: { id: userId, email: data.email, display_name: displayName },
-    };
   });
 
 // ── Login ─────────────────────────────────────────────────────────────────────
