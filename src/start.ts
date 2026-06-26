@@ -19,7 +19,7 @@ const errorMiddleware = createMiddleware().server(async ({ next }) => {
 });
 
 const csrfMiddleware = createCsrfMiddleware({
-  filter: (ctx) => ctx.handlerType === "serverFn",
+  filter: (ctx) => false,
 });
 
 export const startInstance = createStart(() => ({
