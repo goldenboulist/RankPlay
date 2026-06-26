@@ -7,9 +7,4 @@ export default defineConfig({
   nitro: {
     preset: "node-server",
   },
-  vite: {
-    ssr: {
-      external: ["bcryptjs"],
-    },
-  },
 });

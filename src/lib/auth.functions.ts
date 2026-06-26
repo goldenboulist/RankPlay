@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import bcrypt from "bcryptjs";
+import { hash, compare } from "@node-rs/bcrypt";
 import { SignJWT } from "jose";
 import { getDb } from "./db.server";
 
@@ -32,7 +32,7 @@ export const registerFn = createServerFn({ method: "POST" })
     console.log("[register] data reçu:", JSON.stringify(data));
     try {
       const db = getDb();
-      const passwordHash = await bcrypt.hash(data.password, 10);
+      const passwordHash = await hash(data.password, 10);
       console.log("[register] hash ok");
       // Check duplicate email
       const [existing] = await db.execute(
@@ -95,7 +95,7 @@ export const loginFn = createServerFn({ method: "POST" })
 
     if (!user) throw new Error("Invalid email or password.");
 
-    const valid = await bcrypt.compare(data.password, user.password_hash);
+    const valid = await compare(data.password, user.password_hash);
     if (!valid) throw new Error("Invalid email or password.");
 
     const token = await signToken(user.id);
