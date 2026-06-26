@@ -5,9 +5,8 @@ const TOKEN_KEY = "rp_token";
 export const attachSupabaseAuth = createMiddleware({
   type: "function",
 }).client(async ({ next }) => {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
-
+  // Ce bloc ne tourne que côté client, localStorage est sûr ici
+  const token = localStorage.getItem(TOKEN_KEY);
   return next({
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
