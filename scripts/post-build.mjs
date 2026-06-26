@@ -12,20 +12,15 @@ Object.defineProperty(process, "stdin", {
   configurable: true,
 });
 
+// Ignore ALL SIGTERM until server is ready
+process.on("SIGTERM", function() {});
+
 const path = require("path");
 const entryPath = path.join(__dirname, "server", "index.mjs");
 
 import(entryPath).then(function() {
-  // Nitro vient d'enregistrer ses handlers — on les supprime tous
   process.removeAllListeners("SIGTERM");
-  process.removeAllListeners("SIGINT");
-  console.log("[entrypoint] SIGTERM/SIGINT handlers cleared");
-  
-  // Remet un handler propre pour un vrai arrêt
-  process.on("SIGTERM", function() {
-    console.log("[entrypoint] SIGTERM reçu — arrêt propre");
-    process.exit(0);
-  });
+  console.log("[entrypoint] ready");
 }).catch(function(e) {
   if (e.code !== "EEXIST") {
     console.error(e);
