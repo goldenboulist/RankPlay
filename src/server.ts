@@ -1,3 +1,10 @@
+// Hostinger LiteSpeed workaround — stdin fd conflict
+process.on("uncaughtException", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EEXIST" && err.stack?.includes("stdin")) return;
+  console.error(err);
+  process.exit(1);
+});
+
 import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
