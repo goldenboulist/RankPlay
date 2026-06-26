@@ -7,14 +7,14 @@ process.on("uncaughtException", function(e) {
   process.exit(1);
 });
 
+// LiteSpeed sends SIGTERM as a health-check probe — ignore it
+let startTime = Date.now();
 process.on("SIGTERM", function() {
-  console.log("[entrypoint] SIGTERM reçu");
-  console.trace();
-});
-
-process.on("SIGINT", function() {
-  console.log("[entrypoint] SIGINT reçu");
-  console.trace();
+  if (Date.now() - startTime < 10000) {
+    console.log("[entrypoint] SIGTERM ignoré (trop tôt)");
+    return; // ignore pendant les 10 premières secondes
+  }
+  process.exit(0);
 });
 
 Object.defineProperty(process, "stdin", {
