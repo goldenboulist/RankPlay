@@ -14,7 +14,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeKey>("dark");
 
   useEffect(() => {
-    const saved = (typeof window !== "undefined" && (localStorage.getItem(STORAGE_KEY) as ThemeKey)) || "dark";
+    const saved = (typeof window !== "undefined" && (localStorage.getItem(STORAGE_KEY) as ThemeKey)) || "red";
     setThemeState(saved);
   }, []);
 
