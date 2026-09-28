@@ -19,6 +19,7 @@ import { Heart, Plus, Search, Trash2, Star, Film, Tv, SlidersHorizontal, LayoutG
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
+import { rememberSequence } from "@/components/item-navigator";
 
 export const Route = createFileRoute("/_authenticated/media/")({
   validateSearch: (s: Record<string, unknown>) => ({
@@ -108,6 +109,11 @@ function MediaPage() {
     });
     return items;
   }, [query.data, search, sort, categoryFilter, favOnly, type]);
+
+  // Detail pages navigate prev/next in the order currently shown here
+  useEffect(() => {
+    if (query.data) rememberSequence("media", enriched.map((m) => m.id));
+  }, [enriched, query.data]);
 
   if (query.isLoading) return <PageLoading />;
 

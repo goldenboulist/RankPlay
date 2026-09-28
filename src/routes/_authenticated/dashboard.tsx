@@ -1,34 +1,86 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
-} from "recharts";
+import { useMemo, useEffect, useState, type ReactNode } from "react";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
 import { listGames } from "@/lib/games.functions";
 import { listMedia } from "@/lib/media.functions";
 import { withOverall } from "@/lib/scoring";
-import { Trophy, Library, Star, TrendingUp, TrendingDown, Gauge, Film, Tv } from "@/lib/icons";
+import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
+import { Button } from "@/components/ui/button";
+import { Trophy, Star, Film, Tv, Crown, Plus } from "@/lib/icons";
 
 // ─── Route ────────────────────────────────────────────────────────────────────
+type TabValue = "games" | "movies" | "series";
+
 export const Route = createFileRoute("/_authenticated/dashboard")({
+  // Optional so plain links to /dashboard stay valid; kept in the URL so "back" restores it
+  validateSearch: (s: Record<string, unknown>): { tab?: TabValue } => ({
+    tab: s.tab === "movies" || s.tab === "series" ? s.tab : undefined,
+  }),
   head: () => ({ meta: [{ title: "Dashboard" }] }),
   component: Dashboard,
 });
 
-// ─── Medal colors ─────────────────────────────────────────────────────────────
+// ─── Medal colors (theme tokens) ──────────────────────────────────────────────
 const MEDAL_CSS = [
   "var(--color-gold, #c9913a)",
   "var(--color-silver, #9ca3af)",
   "var(--color-bronze, #a16207)",
 ] as const;
 
-// ─── Animated counter ─────────────────────────────────────────────────────────
+const TABS = [
+  { value: "games", label: "Games", singular: "game", Icon: Trophy },
+  { value: "movies", label: "Movies", singular: "movie", Icon: Film },
+  { value: "series", label: "Series", singular: "series", Icon: Tv },
+] as const;
+
+type TabConfig = (typeof TABS)[number];
+
+// ─── Data ─────────────────────────────────────────────────────────────────────
+type Item = { id: string; title: string; cover_url: string | null };
+type RankedItem = Item & { overall: number };
+type Category = { id: string; name: string; icon: string | null; coefficient?: number | string };
+type Rating = { category_id: string; score: number | string } & Record<string, any>;
+
+function computeStats(items: Item[], ratings: Rating[], categories: Category[], idKey: "game_id" | "media_id") {
+  const ranked = withOverall(items, ratings as any, categories, idKey)
+    .filter((g): g is typeof g & { overall: number } => g.overall !== null)
+    .sort((a, b) => b.overall - a.overall) as RankedItem[];
+  const unrated = items.filter((it) => !ranked.some((r) => r.id === it.id));
+  const avg = ranked.length ? ranked.reduce((a, b) => a + b.overall, 0) / ranked.length : 0;
+
+  // Histogram of overall scores, one bucket per point (9–10 includes 10)
+  const buckets = Array.from({ length: 10 }, (_, i) => ({ from: i, label: `${i}–${i + 1}`, count: 0 }));
+  ranked.forEach((g) => { buckets[Math.min(9, Math.floor(g.overall))].count++; });
+
+  // Per category: average score + leaders
+  const byCategory = categories
+    .map((cat) => {
+      const scored = ratings
+        .filter((r) => r.category_id === cat.id)
+        .flatMap((r) => {
+          const item = items.find((x) => x.id === r[idKey]);
+          return item ? [{ ...item, score: Number(r.score) }] : [];
+        })
+        .sort((a, b) => b.score - a.score);
+      const avg = scored.length ? scored.reduce((a, b) => a + b.score, 0) / scored.length : 0;
+      return { category: cat, avg, count: scored.length, leaders: scored.slice(0, 3) };
+    })
+    .filter((c) => c.count > 0);
+
+  return { ranked, unrated, avg, buckets, byCategory };
+}
+
+type Stats = ReturnType<typeof computeStats>;
+
+// ─── Small pieces ─────────────────────────────────────────────────────────────
 function Counter({ value, decimals = 0 }: { value: number; decimals?: number }) {
-  const [v, setV] = useState(0);
+  const reduce = useReducedMotion();
+  const [v, setV] = useState(reduce ? value : 0);
   useEffect(() => {
+    if (reduce) { setV(value); return; }
     const start = performance.now();
     const dur = 1100;
     let raf = 0;
@@ -39,404 +91,424 @@ function Counter({ value, decimals = 0 }: { value: number; decimals?: number }) 
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [value]);
+  }, [value, reduce]);
   return <>{v.toFixed(decimals)}</>;
 }
 
-// ─── computeStats (logic unchanged) ──────────────────────────────────────────
-function computeStats(items: any[], ratings: any[], categories: any[], idKey: "game_id" | "media_id") {
-  const enriched = withOverall(items, ratings, categories, idKey).filter((g: any) => g.overall !== null);
-  const sorted = [...enriched].sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0));
-  const avg = enriched.length
-    ? enriched.reduce((a, b) => a + (b.overall ?? 0), 0) / enriched.length
-    : 0;
-  const buckets = Array.from({ length: 10 }, (_, i) => ({ range: `${i}–${i + 1}`, count: 0 }));
-  enriched.forEach((g) => { buckets[Math.min(9, Math.floor(g.overall ?? 0))].count++; });
-  const catTotals = new Map();
-  ratings.forEach((r: any) => {
-    const cat = categories.find((c: any) => c.id === r.category_id);
-    if (!cat) return;
-    const cur = catTotals.get(cat.id) ?? { sum: 0, count: 0, name: cat.name };
-    cur.sum += Number(r.score); cur.count++;
-    catTotals.set(cat.id, cur);
-  });
-  const catData = Array.from(catTotals.values()).map((c: any) => ({
-    name: c.name, value: +(c.sum / c.count).toFixed(2),
-  }));
-  const catTop3 = categories.map((cat: any) => {
-    const topArr = ratings
-      .filter((r: any) => r.category_id === cat.id)
-      .flatMap((r: any) => {
-        const item = items.find((x: any) => x.id === r[idKey]);
-        return item ? [{ id: item.id, title: item.title, cover_url: item.cover_url ?? null, score: Number(r.score) }] : [];
-      })
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 3);
-    return { category: cat, top: topArr };
-  }).filter((c: any) => c.top.length > 0);
-  return { total: items.length, avg, top: sorted[0], bottom: sorted[sorted.length - 1], sorted, buckets, catData, catTop3 };
+function Cover({ item, className }: { item: Item; className: string }) {
+  return item.cover_url ? (
+    <img src={item.cover_url} alt="" loading="lazy" className={`${className} object-cover`} />
+  ) : (
+    <div className={`${className} grid place-items-center bg-muted`}>
+      <Star className="h-1/3 w-1/3 text-muted-foreground/40" />
+    </div>
+  );
 }
 
-// ─── Stat card ────────────────────────────────────────────────────────────────
-function StatCard({ icon: Icon, label, value, sub, gold }: {
-  icon: React.ComponentType<any>; label: string; value: React.ReactNode; sub?: string; gold?: boolean;
+/** Link to the item's detail page (games and media live on different routes). */
+function ItemLink({ tab, id, className, title, children }: {
+  tab: TabValue; id: string; className?: string; title?: string; children: ReactNode;
 }) {
-  return (
-    <div className={[
-      "relative overflow-hidden rounded-xl border p-5 transition-colors",
-      gold
-        ? "border-[var(--color-gold,#c9913a)]/20 bg-[var(--color-gold,#c9913a)]/5"
-        : "border-border/50 bg-card",
-    ].join(" ")}>
-      {gold && (
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,var(--color-gold,#c9913a)/8%,transparent_60%)]" />
-      )}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-            {label}
-          </p>
-          <p className={[
-            "mt-2.5 text-[38px] font-light leading-none tabular-nums",
-            gold ? "text-[var(--color-gold,#c9913a)]" : "text-foreground",
-          ].join(" ")}>
-            {value}
-          </p>
-          {sub && (
-            <p className="mt-2 truncate text-[11px] text-muted-foreground">{sub}</p>
-          )}
-        </div>
-        <div className={[
-          "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-          gold ? "bg-[var(--color-gold,#c9913a)]/15" : "bg-muted/40",
-        ].join(" ")}>
-          <Icon className={[
-            "h-3.5 w-3.5",
-            gold ? "text-[var(--color-gold,#c9913a)]" : "text-muted-foreground",
-          ].join(" ")} />
-        </div>
-      </div>
-    </div>
+  return tab === "games" ? (
+    <Link to="/games/$gameId" params={{ gameId: id }} className={className} title={title}>{children}</Link>
+  ) : (
+    <Link to="/media/$mediaId" params={{ mediaId: id }} className={className} title={title}>{children}</Link>
   );
 }
 
-// ─── Podium ───────────────────────────────────────────────────────────────────
-function Podium({ items, itemRoute, typeLabel }: { items: any[]; itemRoute: string; typeLabel: string }) {
-  if (!items.length) return null;
-  const [first, second, third] = items;
-  const slots = [second, first, third].filter(Boolean);
-  // rank: index in slots → 2nd, 1st, 3rd
-  const rankOf = (vi: number) => (vi === 1 ? 1 : vi === 0 ? 2 : 3);
-
-  return (
-    <div className="flex items-end justify-center gap-2 px-4 pt-6 pb-0">
-      {slots.map((item, vi) => {
-        const rank = rankOf(vi);
-        const isFirst = rank === 1;
-        const pedH = isFirst ? 52 : rank === 2 ? 32 : 18;
-        const color = MEDAL_CSS[rank - 1];
-        const params = (typeLabel === "Games" ? { gameId: item.id } : { mediaId: item.id }) as any;
-
-        return (
-          <motion.div
-            key={item.id}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.05 + vi * 0.08, duration: 0.35 }}
-            style={{ flex: isFirst ? "0 0 192px" : "0 0 150px" }}
-          >
-            <Link to={itemRoute} params={params} className="block no-underline">
-              {/* Card */}
-              <div className={[
-                "rounded-t-xl border-x border-t px-3 pb-4 pt-4 flex flex-col items-center gap-2.5",
-                isFirst
-                  ? "bg-card border-[var(--color-gold,#c9913a)]/20 relative overflow-hidden"
-                  : "bg-muted/30 border-border/40",
-              ].join(" ")}>
-                {isFirst && (
-                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,var(--color-gold,#c9913a)/8%,transparent_65%)]" />
-                )}
-                {/* Rank label */}
-                <span
-                  className="text-[10px] font-semibold uppercase tracking-[0.14em]"
-                  style={{ color }}
-                >
-                  {["1st", "2nd", "3rd"][rank - 1]}
-                </span>
-                {/* Cover */}
-                {item.cover_url ? (
-                  <img
-                    src={item.cover_url} alt={item.title}
-                    className="rounded-md object-cover shadow-md"
-                    style={{
-                      width: isFirst ? 68 : 50,
-                      height: isFirst ? 90 : 66,
-                    }}
-                  />
-                ) : (
-                  <div
-                    className="rounded-md bg-muted grid place-items-center"
-                    style={{ width: isFirst ? 68 : 50, height: isFirst ? 90 : 66 }}
-                  >
-                    <Star className="h-5 w-5 text-muted-foreground/40" />
-                  </div>
-                )}
-                {/* Title */}
-                <p className={[
-                  "m-0 text-center font-medium leading-snug text-foreground line-clamp-2 w-full",
-                  isFirst ? "text-[12px]" : "text-[11px]",
-                ].join(" ")}>
-                  {item.title}
-                </p>
-                {/* Score */}
-                <span
-                  className={["font-light tabular-nums leading-none", isFirst ? "text-[26px]" : "text-[20px]"].join(" ")}
-                  style={{ color: isFirst ? "var(--color-gold, #c9913a)" : "var(--color-foreground)" }}
-                >
-                  {item.overall?.toFixed(1)}
-                </span>
-              </div>
-              {/* Pedestal */}
-              <div
-                className="border-x border-b border-border/30"
-                style={{
-                  height: pedH,
-                  background: isFirst
-                    ? "color-mix(in oklab, var(--color-gold, #c9913a) 10%, transparent)"
-                    : "color-mix(in oklab, var(--color-border) 30%, transparent)",
-                }}
-              />
-            </Link>
-          </motion.div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Rank badge ───────────────────────────────────────────────────────────────
-function RankBadge({ rank }: { rank: number }) {
-  const color = rank <= 3 ? MEDAL_CSS[rank - 1] : undefined;
-  return (
-    <div
-      className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[12px] font-medium"
-      style={{
-        border: `1px solid ${color ?? "var(--color-border)"}`,
-        background: color
-          ? `color-mix(in oklab, ${color} 14%, transparent)`
-          : "color-mix(in oklab, var(--color-border) 40%, transparent)",
-        color: color ?? "var(--color-muted-foreground)",
-      }}
-    >
-      {rank}
-    </div>
-  );
-}
-
-// ─── Ranked row ───────────────────────────────────────────────────────────────
-function RankedRow({ item, rank, itemRoute, typeLabel }: { item: any; rank: number; itemRoute: string; typeLabel: string }) {
-  const params = (typeLabel === "Games" ? { gameId: item.id } : { mediaId: item.id }) as any;
-  return (
-    <Link
-      to={itemRoute} params={params}
-      className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/30 transition-colors no-underline"
-    >
-      <RankBadge rank={rank} />
-      {item.cover_url ? (
-        <img src={item.cover_url} alt="" className="h-10 w-8 shrink-0 rounded object-cover" />
-      ) : (
-        <div className="h-10 w-8 shrink-0 rounded bg-muted grid place-items-center">
-          <Star className="h-3 w-3 text-muted-foreground/40" />
-        </div>
-      )}
-      <p className="flex-1 truncate text-[13px] font-medium text-foreground m-0">{item.title}</p>
-      <span className="shrink-0 text-[20px] font-light tabular-nums text-muted-foreground">
-        {item.overall?.toFixed(1)}
-      </span>
+/** Link to the library, sorted by score (and filtered to the tab's media type). */
+function LibraryLink({ tab, className, children }: { tab: TabValue; className?: string; children: ReactNode }) {
+  const base = { category: "all", search: "", sort: "score_desc", favOnly: false };
+  return tab === "games" ? (
+    <Link to="/games" search={base} className={className}>{children}</Link>
+  ) : (
+    <Link to="/media" search={{ ...base, type: tab === "movies" ? "movie" : "series" }} className={className}>
+      {children}
     </Link>
   );
 }
 
-// ─── Chart tooltip ────────────────────────────────────────────────────────────
-function ChartTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
+function Panel({ title, aside, children, className = "" }: {
+  title: string; aside?: ReactNode; children: ReactNode; className?: string;
+}) {
   return (
-    <div className="rounded-lg border border-border/60 bg-card/90 backdrop-blur-sm px-3 py-2 shadow-xl text-xs">
-      <p className="text-muted-foreground mb-1">{label}</p>
-      {payload.map((p: any) => (
-        <p key={p.dataKey} className="text-[18px] font-light tabular-nums" style={{ color: "var(--color-gold, #c9913a)" }}>
-          {typeof p.value === "number" ? p.value.toFixed(p.dataKey === "count" ? 0 : 2) : p.value}
+    <section className={`rounded-2xl border border-border/50 bg-card/80 ${className}`}>
+      <header className="flex items-baseline justify-between gap-3 px-5 pt-4 pb-3">
+        <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
+        {aside}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function formatScore(n: number) {
+  return n.toFixed(1);
+}
+
+// ─── Champion banner ──────────────────────────────────────────────────────────
+function Champion({ stats, tab, config }: { stats: Stats; tab: TabValue; config: TabConfig }) {
+  const reduce = useReducedMotion();
+  const champ = stats.ranked[0];
+
+  const facts = [
+    { value: <Counter value={stats.ranked.length} />, label: "rated" },
+    { value: <Counter value={stats.avg} decimals={1} />, label: "average score" },
+    { value: <Counter value={stats.unrated.length} />, label: "not rated yet" },
+  ];
+
+  return (
+    <section className="relative overflow-hidden rounded-2xl border border-[var(--color-gold,#c9913a)]/25 bg-card">
+      {/* Same backdrop treatment as the detail pages */}
+      {champ.cover_url && (
+        <div
+          aria-hidden
+          className="absolute inset-0 scale-110"
+          style={{
+            backgroundImage: `url(${champ.cover_url})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            filter: "blur(40px) saturate(1.4)",
+            opacity: 0.35,
+          }}
+        />
+      )}
+      <div aria-hidden className="absolute inset-0 bg-gradient-to-r from-card via-card/85 to-card/40" />
+
+      <div className="relative flex flex-col gap-6 p-5 sm:p-7 md:flex-row md:items-end md:justify-between">
+        <ItemLink tab={tab} id={champ.id} className="group flex min-w-0 items-end gap-5 no-underline">
+          <motion.div
+            initial={reduce ? false : { opacity: 0, scale: 0.92, rotate: -2 }}
+            animate={{ opacity: 1, scale: 1, rotate: 0 }}
+            transition={{ type: "spring", stiffness: 160, damping: 18 }}
+            className="relative shrink-0"
+          >
+            <Cover
+              item={champ}
+              className="w-24 sm:w-32 aspect-[3/4] rounded-xl shadow-2xl ring-2 ring-[var(--color-gold,#c9913a)]/60 transition-transform duration-300 group-hover:-translate-y-1"
+            />
+            <span
+              className="absolute -top-3 -left-3 grid h-9 w-9 place-items-center rounded-full shadow-lg"
+              style={{ background: MEDAL_CSS[0] }}
+            >
+              <Crown className="h-4.5 w-4.5 text-black/75" />
+            </span>
+          </motion.div>
+
+          <div className="min-w-0 pb-1">
+            <p className="text-sm text-muted-foreground">Your #1 {config.singular}</p>
+            <h2 className="mt-1 text-2xl sm:text-4xl font-bold tracking-tight leading-tight line-clamp-2 group-hover:underline decoration-[var(--color-gold,#c9913a)]/50 underline-offset-4">
+              {champ.title}
+            </h2>
+            <p className="mt-2 flex items-baseline gap-1.5">
+              <span className="text-4xl sm:text-5xl font-light tabular-nums leading-none text-[var(--color-gold,#c9913a)]">
+                <Counter value={champ.overall} decimals={1} />
+              </span>
+              <span className="text-sm text-muted-foreground">/ 10</span>
+            </p>
+          </div>
+        </ItemLink>
+
+        <dl className="grid grid-cols-3 gap-x-6 gap-y-1 md:shrink-0 md:gap-x-8">
+          {facts.map((f) => (
+            <div key={f.label} className="flex flex-col-reverse">
+              <dt className="text-xs text-muted-foreground">{f.label}</dt>
+              <dd className="text-2xl sm:text-3xl font-light tabular-nums leading-tight">{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </section>
+  );
+}
+
+// ─── Top 10 ranking ───────────────────────────────────────────────────────────
+function Ranking({ stats, tab, config }: { stats: Stats; tab: TabValue; config: TabConfig }) {
+  const rows = stats.ranked.slice(1, 10);
+  const last = stats.ranked.length > 10 ? stats.ranked[stats.ranked.length - 1] : null;
+
+  return (
+    <Panel
+      title="Top 10"
+      aside={
+        <LibraryLink tab={tab} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+          Full ranking
+        </LibraryLink>
+      }
+    >
+      {rows.length === 0 ? (
+        <p className="px-5 pb-5 text-sm text-muted-foreground">
+          Rate another {config.singular} to start a ranking.
         </p>
-      ))}
-    </div>
+      ) : (
+        <ol className="pb-2" start={2}>
+          {rows.map((item, i) => (
+            <RankRow key={item.id} item={item} rank={i + 2} tab={tab} />
+          ))}
+        </ol>
+      )}
+      {last && (
+        <div className="border-t border-border/40 px-2 py-2">
+          <p className="px-3 pt-1 text-xs text-muted-foreground">Last place</p>
+          <ol start={stats.ranked.length}>
+            <RankRow item={last} rank={stats.ranked.length} tab={tab} />
+          </ol>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function RankRow({ item, rank, tab }: { item: RankedItem; rank: number; tab: TabValue }) {
+  const medal = rank <= 3 ? MEDAL_CSS[rank - 1] : undefined;
+  return (
+    <li>
+      <ItemLink
+        tab={tab}
+        id={item.id}
+        className="mx-2 grid grid-cols-[1.75rem_2rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-3 py-1.5 no-underline transition-colors hover:bg-muted/40"
+      >
+        <span
+          className="text-right text-sm font-semibold tabular-nums"
+          style={{ color: medal ?? "var(--color-muted-foreground)" }}
+        >
+          {rank}
+        </span>
+        <Cover item={item} className="h-10 w-8 rounded" />
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-medium text-foreground">{item.title}</span>
+          {/* Score bar: length = score out of 10 */}
+          <span className="mt-1.5 block h-1 rounded-full bg-muted">
+            <span
+              className="block h-full rounded-full"
+              style={{ width: `${item.overall * 10}%`, background: medal ?? "var(--color-primary)" }}
+            />
+          </span>
+        </span>
+        <span className="w-9 text-right text-lg font-light tabular-nums text-foreground">
+          {formatScore(item.overall)}
+        </span>
+      </ItemLink>
+    </li>
+  );
+}
+
+// ─── Score distribution ───────────────────────────────────────────────────────
+function Distribution({ stats, config }: { stats: Stats; config: TabConfig }) {
+  const peak = stats.buckets.reduce((a, b) => (b.count > a.count ? b : a));
+  const plural = config.value === "series" ? "series" : `${config.singular}s`;
+
+  return (
+    <Panel title={`Most of your ${plural} score between ${peak.from} and ${peak.from + 1}`}>
+      <div className="h-44 px-3 pb-3" role="img" aria-label={`Score distribution: ${stats.buckets.map((b) => `${b.label}: ${b.count}`).join(", ")}`}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={stats.buckets} margin={{ top: 8, right: 4, bottom: 0, left: -28 }} barCategoryGap={2}>
+            <XAxis
+              dataKey="from"
+              tickLine={false}
+              axisLine={{ stroke: "var(--color-border)" }}
+              tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
+            />
+            <YAxis
+              allowDecimals={false}
+              tickLine={false}
+              axisLine={false}
+              tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
+            />
+            <Tooltip
+              cursor={{ fill: "var(--color-muted)", opacity: 0.4 }}
+              content={({ active, payload }) => {
+                if (!active || !payload?.length) return null;
+                const b = payload[0].payload as Stats["buckets"][number];
+                return (
+                  <div className="rounded-lg border border-border/60 bg-popover px-3 py-2 text-xs shadow-xl">
+                    <span className="font-semibold tabular-nums">{b.count}</span>{" "}
+                    <span className="text-muted-foreground">scored {b.label}</span>
+                  </div>
+                );
+              }}
+            />
+            <Bar dataKey="count" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+              {stats.buckets.map((b) => (
+                <Cell key={b.from} fill="var(--color-primary)" fillOpacity={b.from === peak.from ? 1 : 0.55} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </Panel>
+  );
+}
+
+// ─── Category averages ────────────────────────────────────────────────────────
+function CategoryAverages({ stats }: { stats: Stats }) {
+  const rows = [...stats.byCategory].sort((a, b) => b.avg - a.avg);
+  if (rows.length === 0) return null;
+  return (
+    <Panel title="Average by category">
+      <ul className="space-y-2.5 px-5 pb-5">
+        {rows.map(({ category, avg, count }) => {
+          const Icon = category.icon ? CATEGORY_ICONS[category.icon as CategoryIconName] : null;
+          return (
+            <li
+              key={category.id}
+              className="grid grid-cols-[minmax(0,8rem)_1fr_2.25rem] items-center gap-3"
+              title={`${category.name}: ${formatScore(avg)} average over ${count} rating${count > 1 ? "s" : ""}`}
+            >
+              <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
+                {Icon && <Icon className="h-3.5 w-3.5 shrink-0" />}
+                <span className="truncate">{category.name}</span>
+              </span>
+              <span className="h-2 rounded-full bg-muted">
+                <span className="block h-full rounded-full bg-primary" style={{ width: `${avg * 10}%` }} />
+              </span>
+              <span className="text-right text-sm tabular-nums">{formatScore(avg)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+// ─── Best in each category ────────────────────────────────────────────────────
+function CategoryLeaders({ stats, tab }: { stats: Stats; tab: TabValue }) {
+  if (stats.byCategory.length === 0) return null;
+  return (
+    <Panel title="Best in each category">
+      <ul className="divide-y divide-border/40 border-t border-border/40">
+        {stats.byCategory.map(({ category, leaders }) => {
+          const Icon = category.icon ? CATEGORY_ICONS[category.icon as CategoryIconName] : null;
+          const [first, ...runnersUp] = leaders;
+          return (
+            <li
+              key={category.id}
+              className="grid grid-cols-1 gap-2 px-5 py-3 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-center sm:gap-4"
+            >
+              <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                {Icon && <Icon className="h-4 w-4 shrink-0 text-primary" />}
+                <span className="truncate">{category.name}</span>
+              </span>
+
+              <ItemLink tab={tab} id={first.id} className="group flex min-w-0 items-center gap-3 no-underline">
+                <Cover item={first} className="h-11 w-8 shrink-0 rounded" />
+                <span className="truncate text-sm text-foreground group-hover:underline underline-offset-4">
+                  {first.title}
+                </span>
+                <span className="ml-auto shrink-0 text-lg font-light tabular-nums sm:ml-0" style={{ color: MEDAL_CSS[0] }}>
+                  {formatScore(first.score)}
+                </span>
+              </ItemLink>
+
+              {runnersUp.length > 0 && (
+                <span className="flex items-center gap-2">
+                  {runnersUp.map((r, i) => (
+                    <ItemLink
+                      key={r.id}
+                      tab={tab}
+                      id={r.id}
+                      title={`${i + 2}. ${r.title}: ${formatScore(r.score)}`}
+                      className="flex items-center gap-1.5 rounded-md py-0.5 pl-0.5 pr-2 no-underline transition-colors hover:bg-muted/50"
+                    >
+                      <Cover item={r} className="h-8 w-6 rounded-sm" />
+                      <span className="text-xs tabular-nums" style={{ color: MEDAL_CSS[i + 1] }}>
+                        {formatScore(r.score)}
+                      </span>
+                    </ItemLink>
+                  ))}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+// ─── Waiting for a rating ─────────────────────────────────────────────────────
+function Unrated({ stats, tab, config }: { stats: Stats; tab: TabValue; config: TabConfig }) {
+  const shown = stats.unrated.slice(0, 12);
+  if (shown.length === 0) return null;
+  const more = stats.unrated.length - shown.length;
+  const plural = config.value === "series" ? "series" : `${config.singular}s`;
+  return (
+    <Panel
+      title={`${stats.unrated.length} ${stats.unrated.length === 1 ? config.singular : plural} waiting for a rating`}
+      aside={more > 0 && (
+        <LibraryLink tab={tab} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+          {more} more in your library
+        </LibraryLink>
+      )}
+    >
+      <ul className="grid grid-cols-4 gap-3 px-5 pb-5 sm:grid-cols-6 lg:grid-cols-12">
+        {shown.map((item) => (
+          <li key={item.id}>
+            <ItemLink tab={tab} id={item.id} title={`Rate ${item.title}`} className="group block no-underline">
+              <Cover
+                item={item}
+                className="aspect-[3/4] w-full rounded-lg opacity-70 ring-1 ring-border/50 transition-all group-hover:opacity-100 group-hover:ring-primary"
+              />
+              <span className="mt-1 block truncate text-[11px] text-muted-foreground group-hover:text-foreground">
+                {item.title}
+              </span>
+            </ItemLink>
+          </li>
+        ))}
+      </ul>
+    </Panel>
   );
 }
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
-function EmptyState({ typeLabel, emptyLink }: { typeLabel: string; emptyLink: string }) {
+function EmptyState({ stats, tab, config }: { stats: Stats | null; tab: TabValue; config: TabConfig }) {
+  const plural = config.value === "series" ? "series" : `${config.singular}s`;
+  const hasItems = !!stats && stats.unrated.length > 0;
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border/40 bg-card py-24 text-center"
-    >
-      <div className="relative w-14 h-14">
-        <div className="absolute inset-0 rounded-xl bg-muted/50 rotate-6" />
-        <div className="absolute inset-0 rounded-xl bg-muted/30 -rotate-3" />
-        <div className="relative grid h-full place-items-center rounded-xl bg-muted/60 border border-border/40">
-          <Trophy className="h-5 w-5 text-muted-foreground/50" />
+    <div className="space-y-4">
+      <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-border/60 px-6 py-16 text-center">
+        <config.Icon className="h-8 w-8 text-muted-foreground/50" />
+        <div className="space-y-1">
+          <p className="font-semibold">No rated {plural} yet</p>
+          <p className="mx-auto max-w-xs text-sm text-muted-foreground">
+            {hasItems
+              ? `Rate one of your ${plural} below and it will show up here.`
+              : `Add a ${config.singular} to your library, then rate it to build your ranking.`}
+          </p>
         </div>
+        {!hasItems && (
+          <Button asChild size="sm" className="gap-2">
+            <LibraryLink tab={tab}>
+              <Plus className="h-4 w-4" /> Add a {config.singular}
+            </LibraryLink>
+          </Button>
+        )}
       </div>
-      <div className="space-y-1">
-        <p className="font-semibold">No ranked {typeLabel.toLowerCase()} yet</p>
-        <p className="text-sm text-muted-foreground max-w-[240px]">
-          Rate a few {typeLabel.toLowerCase()} to watch your hall of fame take shape.
-        </p>
-      </div>
-      <Link
-        to={emptyLink}
-        search={{ category: "all", search: "", sort: "score_desc", favOnly: false } as any}
-        className="text-[13px] no-underline"
-        style={{ color: "var(--color-gold, #c9913a)" }}
-      >
-        Start rating →
-      </Link>
-    </motion.div>
-  );
-}
-
-// ─── Dashboard view ───────────────────────────────────────────────────────────
-function DashboardView({ stats, typeLabel, emptyLink, itemRoute }: {
-  stats: any; typeLabel: string; emptyLink: string; itemRoute: string;
-}) {
-  if (!stats || stats.sorted.length === 0) {
-    return <EmptyState typeLabel={typeLabel} emptyLink={emptyLink} />;
-  }
-
-  const rest = stats.sorted.slice(3, 8);
-
-  return (
-    <div className="space-y-8">
-
-      {/* ── Stat cards ── */}
-      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        {[
-          { icon: Library, label: `${typeLabel} rated`, value: <Counter value={stats.sorted.length} />, gold: false },
-          { icon: Gauge, label: "Average score", value: <Counter value={stats.avg} decimals={2} />, gold: false },
-          { icon: TrendingUp, label: "Highest rated", value: <Counter value={stats.top?.overall ?? 0} decimals={1} />, sub: stats.top?.title, gold: true },
-          { icon: TrendingDown, label: "Lowest rated", value: <Counter value={stats.bottom?.overall ?? 0} decimals={1} />, sub: stats.bottom?.title, gold: false },
-        ].map((card, i) => (
-          <motion.div
-            key={card.label}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.06, duration: 0.3 }}
-          >
-            <StatCard {...card} />
-          </motion.div>
-        ))}
-      </div>
-
-      {/* ── Hall of Fame ── */}
-      <section className="space-y-3">
-        <SectionLabel>Hall of Fame</SectionLabel>
-        <div className="overflow-hidden rounded-xl border border-border/50 bg-card">
-          <Podium items={stats.sorted.slice(0, 3)} itemRoute={itemRoute} typeLabel={typeLabel} />
-          {rest.length > 0 && (
-            <div className="mt-0 border-t border-border/40 divide-y divide-border/30">
-              {rest.map((item: any, i: number) => (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.1 + i * 0.04 }}
-                >
-                  <RankedRow item={item} rank={i + 4} itemRoute={itemRoute} typeLabel={typeLabel} />
-                </motion.div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* ── Category top 3 ── */}
-      {stats.catTop3.length > 0 && (
-        <section className="space-y-3">
-          <SectionLabel>Top 3 by category</SectionLabel>
-          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-            {stats.catTop3.map(({ category, top }: any, ci: number) => (
-              <motion.div
-                key={category.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.06 + ci * 0.06 }}
-                className="overflow-hidden rounded-xl border border-border/50 bg-card"
-              >
-                {/* Header */}
-                <div className="border-b border-border/40 px-4 py-2.5 text-[12px] font-medium text-muted-foreground">
-                  {category.name}
-                </div>
-                {/* Rows */}
-                <div className="divide-y divide-border/30">
-                  {top.map((g: any, i: number) => {
-                    const color = MEDAL_CSS[i];
-                    const params = (typeLabel === "Games" ? { gameId: g.id } : { mediaId: g.id }) as any;
-                    return (
-                      <Link
-                        key={g.id} to={itemRoute} params={params}
-                        className="flex items-center gap-2.5 px-3 py-2 hover:bg-muted/30 transition-colors no-underline"
-                      >
-                        <div
-                          className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-medium"
-                          style={{
-                            border: `1px solid ${color}`,
-                            background: `color-mix(in oklab, ${color} 14%, transparent)`,
-                            color,
-                          }}
-                        >
-                          {i + 1}
-                        </div>
-                        {g.cover_url ? (
-                          <img src={g.cover_url} alt="" className="h-9 w-7 shrink-0 rounded object-cover" />
-                        ) : (
-                          <div className="h-9 w-7 shrink-0 rounded bg-muted grid place-items-center">
-                            <Star className="h-2.5 w-2.5 text-muted-foreground/40" />
-                          </div>
-                        )}
-                        <p className="flex-1 truncate text-[12px] font-medium text-foreground m-0">{g.title}</p>
-                        <span className="shrink-0 text-[16px] font-light tabular-nums" style={{ color }}>
-                          {g.score.toFixed(1)}
-                        </span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </section>
-      )}
+      {stats && <Unrated stats={stats} tab={tab} config={config} />}
     </div>
   );
 }
 
-// ─── Section label ────────────────────────────────────────────────────────────
-function SectionLabel({ children }: { children: React.ReactNode }) {
+// ─── Tab view ─────────────────────────────────────────────────────────────────
+function DashboardView({ stats, tab }: { stats: Stats | null; tab: TabValue }) {
+  const config = TABS.find((t) => t.value === tab)!;
+  if (!stats || stats.ranked.length === 0) return <EmptyState stats={stats} tab={tab} config={config} />;
+
   return (
-    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/60 m-0">
-      {children}
-    </p>
+    <div className="space-y-4">
+      <Champion stats={stats} tab={tab} config={config} />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <Ranking stats={stats} tab={tab} config={config} />
+        <div className="space-y-4">
+          <Distribution stats={stats} config={config} />
+          <CategoryAverages stats={stats} />
+        </div>
+      </div>
+      <CategoryLeaders stats={stats} tab={tab} />
+      <Unrated stats={stats} tab={tab} config={config} />
+    </div>
   );
 }
-
-// ─── Tabs ─────────────────────────────────────────────────────────────────────
-const TABS = [
-  { value: "games", label: "Games", Icon: Trophy },
-  { value: "movies", label: "Movies", Icon: Film },
-  { value: "series", label: "Series", Icon: Tv },
-] as const;
-
-type TabValue = "games" | "movies" | "series";
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 function Dashboard() {
@@ -444,85 +516,69 @@ function Dashboard() {
   const fetchMedia = useServerFn(listMedia);
   const queryGames = useQuery({ queryKey: ["games"], queryFn: () => fetchGames() });
   const queryMedia = useQuery({ queryKey: ["media"], queryFn: () => fetchMedia() });
-  const [tab, setTab] = useState<TabValue>("games");
+
+  const { tab = "games" } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const setTab = (t: TabValue) =>
+    navigate({ search: { tab: t === "games" ? undefined : t }, replace: true });
 
   const gameStats = useMemo(() => {
     if (!queryGames.data) return null;
     return computeStats(queryGames.data.games, queryGames.data.ratings, queryGames.data.categories, "game_id");
   }, [queryGames.data]);
 
-  const movieStats = useMemo(() => {
+  const mediaStats = useMemo(() => {
     if (!queryMedia.data) return null;
-    const movies = queryMedia.data.media.filter((m) => m.media_type === "movie");
-    const ratings = queryMedia.data.ratings.filter((r) => movies.some((m) => m.id === r.media_id));
-    return computeStats(movies, ratings, queryMedia.data.categories, "media_id");
+    const { media, ratings, categories } = queryMedia.data;
+    const forType = (t: "movie" | "series") => {
+      const items = media.filter((m) => m.media_type === t);
+      const ids = new Set(items.map((m) => m.id));
+      return computeStats(items, ratings.filter((r) => ids.has(r.media_id)), categories, "media_id");
+    };
+    return { movies: forType("movie"), series: forType("series") };
   }, [queryMedia.data]);
 
-  const seriesStats = useMemo(() => {
-    if (!queryMedia.data) return null;
-    const series = queryMedia.data.media.filter((m) => m.media_type === "series");
-    const ratings = queryMedia.data.ratings.filter((r) => series.some((m) => m.id === r.media_id));
-    return computeStats(series, ratings, queryMedia.data.categories, "media_id");
-  }, [queryMedia.data]);
-
+  const statsMap = { games: gameStats, movies: mediaStats?.movies ?? null, series: mediaStats?.series ?? null };
   const isLoading = queryGames.isLoading || queryMedia.isLoading;
 
-  const statsMap = { games: gameStats, movies: movieStats, series: seriesStats };
-  const configMap = {
-    games: { typeLabel: "Games", emptyLink: "/games", itemRoute: "/games/$gameId" },
-    movies: { typeLabel: "Movies", emptyLink: "/media", itemRoute: "/media/$mediaId" },
-    series: { typeLabel: "Series", emptyLink: "/media", itemRoute: "/media/$mediaId" },
-  };
-
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      {/* ── Header ── */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
 
-      {/* ── Page header ── */}
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="pb-6 border-b border-border/40"
-      >
-        <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/60 select-none mb-1.5">
-          Overview
-        </p>
-        <h1 className="text-4xl font-bold tracking-tight leading-none">Dashboard</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Your entertainment hall of fame.</p>
-      </motion.div>
-
-      {/* ── Tab bar ── */}
-      <motion.div
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.06 }}
-        className="flex gap-1 rounded-xl border border-border/50 bg-muted/30 p-1 w-fit"
-      >
-        {TABS.map(({ value, label, Icon }) => {
-          const active = tab === value;
-          return (
-            <button
-              key={value}
-              onClick={() => setTab(value)}
-              className={[
-                "relative flex items-center gap-2 rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
-                active
-                  ? "text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              ].join(" ")}
-            >
-              {active && (
-                <motion.div
-                  layoutId="tab-pill"
-                  className="absolute inset-0 rounded-lg bg-background border border-border/60 shadow-sm"
-                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                />
-              )}
-              <Icon className="relative h-3.5 w-3.5" />
-              <span className="relative">{label}</span>
-            </button>
-          );
-        })}
-      </motion.div>
+        <div role="tablist" aria-label="Library" className="flex gap-1 rounded-xl border border-border/50 bg-muted/30 p-1">
+          {TABS.map(({ value, label, Icon }) => {
+            const active = tab === value;
+            const count = statsMap[value]?.ranked.length;
+            return (
+              <button
+                key={value}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(value)}
+                className={[
+                  "relative flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
+                  active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+                ].join(" ")}
+              >
+                {active && (
+                  <motion.div
+                    layoutId="tab-pill"
+                    className="absolute inset-0 rounded-lg bg-background border border-border/60 shadow-sm"
+                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  />
+                )}
+                <Icon className="relative h-3.5 w-3.5" />
+                <span className="relative">{label}</span>
+                {count != null && (
+                  <span className="relative text-xs tabular-nums text-muted-foreground">{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* ── Content ── */}
       {isLoading ? (
@@ -531,15 +587,12 @@ function Dashboard() {
         <AnimatePresence mode="wait">
           <motion.div
             key={tab}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.2 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
           >
-            <DashboardView
-              stats={statsMap[tab]}
-              {...configMap[tab]}
-            />
+            <DashboardView stats={statsMap[tab]} tab={tab} />
           </motion.div>
         </AnimatePresence>
       )}
@@ -550,16 +603,14 @@ function Dashboard() {
 // ─── Loading skeleton ─────────────────────────────────────────────────────────
 function DashboardSkeleton() {
   return (
-    <div className="space-y-8">
-      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-24 rounded-xl bg-muted/30 animate-pulse" style={{ animationDelay: `${i * 60}ms` }} />
-        ))}
-      </div>
-      <div className="rounded-xl bg-muted/20 animate-pulse h-72" />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl bg-muted/20 animate-pulse h-52" />
-        <div className="rounded-xl bg-muted/20 animate-pulse h-52" />
+    <div className="space-y-4">
+      <div className="h-48 rounded-2xl bg-muted/30 animate-pulse" />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className="h-[30rem] rounded-2xl bg-muted/20 animate-pulse" />
+        <div className="space-y-4">
+          <div className="h-56 rounded-2xl bg-muted/20 animate-pulse" />
+          <div className="h-56 rounded-2xl bg-muted/20 animate-pulse" />
+        </div>
       </div>
     </div>
   );

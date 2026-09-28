@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as PolitiqueConfidentialiteRouteImport } from './routes/politique-confidentialite'
+import { Route as MentionsLegalesRouteImport } from './routes/mentions-legales'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
@@ -21,10 +23,22 @@ import { Route as AuthenticatedGamesIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedUsersUserIdRouteImport } from './routes/_authenticated/users.$userId'
 import { Route as AuthenticatedMediaMediaIdRouteImport } from './routes/_authenticated/media.$mediaId'
 import { Route as AuthenticatedGamesGameIdRouteImport } from './routes/_authenticated/games.$gameId'
+import { Route as AuthenticatedUsersUserIdKindItemIdRouteImport } from './routes/_authenticated/users.$userId_.$kind.$itemId'
 
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PolitiqueConfidentialiteRoute =
+  PolitiqueConfidentialiteRouteImport.update({
+    id: '/politique-confidentialite',
+    path: '/politique-confidentialite',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const MentionsLegalesRoute = MentionsLegalesRouteImport.update({
+  id: '/mentions-legales',
+  path: '/mentions-legales',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRoute = AuthRouteImport.update({
@@ -84,10 +98,18 @@ const AuthenticatedGamesGameIdRoute =
     path: '/games/$gameId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedUsersUserIdKindItemIdRoute =
+  AuthenticatedUsersUserIdKindItemIdRouteImport.update({
+    id: '/users/$userId_/$kind/$itemId',
+    path: '/users/$userId/$kind/$itemId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/mentions-legales': typeof MentionsLegalesRoute
+  '/politique-confidentialite': typeof PolitiqueConfidentialiteRoute
   '/reset-password': typeof ResetPasswordRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/settings': typeof AuthenticatedSettingsRoute
@@ -97,10 +119,13 @@ export interface FileRoutesByFullPath {
   '/games/': typeof AuthenticatedGamesIndexRoute
   '/media/': typeof AuthenticatedMediaIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
+  '/users/$userId/$kind/$itemId': typeof AuthenticatedUsersUserIdKindItemIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/mentions-legales': typeof MentionsLegalesRoute
+  '/politique-confidentialite': typeof PolitiqueConfidentialiteRoute
   '/reset-password': typeof ResetPasswordRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/settings': typeof AuthenticatedSettingsRoute
@@ -110,12 +135,15 @@ export interface FileRoutesByTo {
   '/games': typeof AuthenticatedGamesIndexRoute
   '/media': typeof AuthenticatedMediaIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
+  '/users/$userId/$kind/$itemId': typeof AuthenticatedUsersUserIdKindItemIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/mentions-legales': typeof MentionsLegalesRoute
+  '/politique-confidentialite': typeof PolitiqueConfidentialiteRoute
   '/reset-password': typeof ResetPasswordRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
@@ -125,12 +153,15 @@ export interface FileRoutesById {
   '/_authenticated/games/': typeof AuthenticatedGamesIndexRoute
   '/_authenticated/media/': typeof AuthenticatedMediaIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
+  '/_authenticated/users/$userId_/$kind/$itemId': typeof AuthenticatedUsersUserIdKindItemIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/auth'
+    | '/mentions-legales'
+    | '/politique-confidentialite'
     | '/reset-password'
     | '/dashboard'
     | '/settings'
@@ -140,10 +171,13 @@ export interface FileRouteTypes {
     | '/games/'
     | '/media/'
     | '/users/'
+    | '/users/$userId/$kind/$itemId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth'
+    | '/mentions-legales'
+    | '/politique-confidentialite'
     | '/reset-password'
     | '/dashboard'
     | '/settings'
@@ -153,11 +187,14 @@ export interface FileRouteTypes {
     | '/games'
     | '/media'
     | '/users'
+    | '/users/$userId/$kind/$itemId'
   id:
     | '__root__'
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/mentions-legales'
+    | '/politique-confidentialite'
     | '/reset-password'
     | '/_authenticated/dashboard'
     | '/_authenticated/settings'
@@ -167,12 +204,15 @@ export interface FileRouteTypes {
     | '/_authenticated/games/'
     | '/_authenticated/media/'
     | '/_authenticated/users/'
+    | '/_authenticated/users/$userId_/$kind/$itemId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  MentionsLegalesRoute: typeof MentionsLegalesRoute
+  PolitiqueConfidentialiteRoute: typeof PolitiqueConfidentialiteRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
 }
 
@@ -183,6 +223,20 @@ declare module '@tanstack/react-router' {
       path: '/reset-password'
       fullPath: '/reset-password'
       preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/politique-confidentialite': {
+      id: '/politique-confidentialite'
+      path: '/politique-confidentialite'
+      fullPath: '/politique-confidentialite'
+      preLoaderRoute: typeof PolitiqueConfidentialiteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mentions-legales': {
+      id: '/mentions-legales'
+      path: '/mentions-legales'
+      fullPath: '/mentions-legales'
+      preLoaderRoute: typeof MentionsLegalesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth': {
@@ -262,6 +316,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedGamesGameIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/users/$userId_/$kind/$itemId': {
+      id: '/_authenticated/users/$userId_/$kind/$itemId'
+      path: '/users/$userId/$kind/$itemId'
+      fullPath: '/users/$userId/$kind/$itemId'
+      preLoaderRoute: typeof AuthenticatedUsersUserIdKindItemIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
@@ -274,6 +335,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedGamesIndexRoute: typeof AuthenticatedGamesIndexRoute
   AuthenticatedMediaIndexRoute: typeof AuthenticatedMediaIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
+  AuthenticatedUsersUserIdKindItemIdRoute: typeof AuthenticatedUsersUserIdKindItemIdRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -285,6 +347,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedGamesIndexRoute: AuthenticatedGamesIndexRoute,
   AuthenticatedMediaIndexRoute: AuthenticatedMediaIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
+  AuthenticatedUsersUserIdKindItemIdRoute:
+    AuthenticatedUsersUserIdKindItemIdRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
@@ -294,6 +358,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  MentionsLegalesRoute: MentionsLegalesRoute,
+  PolitiqueConfidentialiteRoute: PolitiqueConfidentialiteRoute,
   ResetPasswordRoute: ResetPasswordRoute,
 }
 export const routeTree = rootRouteImport

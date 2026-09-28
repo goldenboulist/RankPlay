@@ -1,8 +1,12 @@
-// Lightweight auth client that stores the JWT in localStorage.
-// Mimics the Supabase auth interface used across the app.
+// Lightweight auth client mimicking the Supabase auth interface used across the app.
+// The session JWT lives in an httpOnly cookie set by the server; only the
+// (non-secret) user profile is kept in localStorage for the UI.
 
-const TOKEN_KEY = "rp_token";
+import { logoutFn } from "@/lib/auth.functions";
+
 const USER_KEY = "rp_user";
+// Pre-cookie versions stored the JWT here; wipe it so it can't be stolen
+const LEGACY_TOKEN_KEY = "rp_token";
 
 export interface AuthUser {
   id: string;
@@ -11,7 +15,6 @@ export interface AuthUser {
 }
 
 export interface Session {
-  access_token: string;
   user: AuthUser;
 }
 
@@ -27,22 +30,25 @@ function _emit(event: AuthEvent) {
 function getStoredSession(): Session | null {
   if (typeof window === "undefined") return null;
   try {
-    const token = localStorage.getItem(TOKEN_KEY);
+    if (localStorage.getItem(LEGACY_TOKEN_KEY) !== null) {
+      // Old localStorage session: no cookie exists yet, so force a fresh sign-in
+      clearSession();
+      return null;
+    }
     const user = localStorage.getItem(USER_KEY);
-    if (!token || !user) return null;
-    return { access_token: token, user: JSON.parse(user) as AuthUser };
+    if (!user) return null;
+    return { user: JSON.parse(user) as AuthUser };
   } catch {
     return null;
   }
 }
 
-function storeSession(token: string, user: AuthUser) {
-  localStorage.setItem(TOKEN_KEY, token);
+function storeSession(user: AuthUser) {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 function clearSession() {
-  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
 }
 
@@ -78,12 +84,22 @@ export const supabase = {
     },
 
     /** Call after a successful loginFn / registerFn response */
-    _setSession(token: string, user: AuthUser) {
-      storeSession(token, user);
+    _setSession(user: AuthUser) {
+      storeSession(user);
       _emit("SIGNED_IN");
     },
 
-    signOut() {
+    async signOut() {
+      // Clear the httpOnly cookie server-side; still sign out locally if that fails
+      await logoutFn().catch(() => {});
+      clearSession();
+      _emit("SIGNED_OUT");
+      window.location.href = "/auth";
+    },
+
+    /** Drop the local profile after the server rejected the session cookie. */
+    _expire() {
+      if (!getStoredSession()) return;
       clearSession();
       _emit("SIGNED_OUT");
       window.location.href = "/auth";

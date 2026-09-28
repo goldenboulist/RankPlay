@@ -4,6 +4,9 @@ let pool: mysql.Pool | undefined;
 
 export function getDb(): mysql.Pool {
   if (!pool) {
+    if (!process.env.DB_USER || !process.env.DB_PASSWORD) {
+      throw new Error("DB_USER and DB_PASSWORD must be set");
+    }
     console.log("[DB] Connecting to:", {
       host: process.env.DB_HOST,
       port: process.env.DB_PORT,
@@ -14,8 +17,8 @@ export function getDb(): mysql.Pool {
     pool = mysql.createPool({
       host: process.env.DB_HOST || "localhost",
       port: Number(process.env.DB_PORT) || 3306,
-      user: process.env.DB_USER || "root",
-      password: process.env.DB_PASSWORD || "",
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME || "rankplay",
       waitForConnections: true,
       connectionLimit: 10,

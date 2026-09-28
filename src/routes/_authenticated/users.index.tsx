@@ -20,7 +20,7 @@ function formatDate(dateStr: string) {
   });
 }
 
-function getInitials(user: { display_name: string | null; email: string }) {
+function getInitials(user: { display_name: string | null }) {
   if (user.display_name) {
     return user.display_name
       .split(" ")
@@ -29,7 +29,7 @@ function getInitials(user: { display_name: string | null; email: string }) {
       .toUpperCase()
       .slice(0, 2);
   }
-  return user.email[0].toUpperCase();
+  return "?";
 }
 
 // Deterministic avatar gradient from user id
@@ -55,12 +55,12 @@ function UserCard({
   user,
   index,
 }: {
-  user: { id: string; email: string; display_name: string | null; created_at: string };
+  user: { id: string; display_name: string | null; created_at: string };
   index: number;
 }) {
   const initials = getInitials(user);
   const gradient = avatarGradient(user.id);
-  const name = user.display_name || user.email.split("@")[0];
+  const name = user.display_name || "Player";
 
   return (
     <motion.div
@@ -85,7 +85,6 @@ function UserCard({
           <p className="truncate text-[15px] font-semibold text-foreground group-hover:text-primary transition-colors">
             {name}
           </p>
-          <p className="truncate text-[12px] text-muted-foreground">{user.email}</p>
           <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/60">
             <CalendarDays className="h-3 w-3" />
             <span>Joined {formatDate(user.created_at)}</span>

@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   listGames,
@@ -13,17 +13,20 @@ import {
   updateCategoryCoefficient,
   updateGame,
   deleteGameMusic,
-  listUploads,
 } from "@/lib/games.functions";
 import { withOverall, computeOverall } from "@/lib/scoring";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Plus, Trash2, X, Check, Play, Pause, Volume2, VolumeX, Music2, ChevronDown, ChevronUp } from "@/lib/icons";
+import { ArrowLeft, Plus, Trash2, X, Check, Music2, ChevronUp } from "@/lib/icons";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
+import { MusicPicker } from "@/components/music-picker";
+import { MusicPlayer } from "@/components/music-player";
+import { ItemNavigator, useItemSequence } from "@/components/item-navigator";
+import { parseDecimal } from "@/lib/timecode";
 
 export const Route = createFileRoute("/_authenticated/games/$gameId")({
   head: () => ({ meta: [{ title: "Game" }] }),
@@ -66,6 +69,29 @@ function GameDetail() {
     return { above, below };
   }, [sortedByScore, overall, gameId]);
 
+  const navigate = useNavigate();
+  const scoreOrder = useMemo(
+    () =>
+      [...allWithOverall]
+        .sort((a, b) => (b.overall ?? -1) - (a.overall ?? -1) || a.title.localeCompare(b.title))
+        .map((g) => g.id),
+    [allWithOverall],
+  );
+  const sequence = useItemSequence("games", gameId, all.data?.games ?? [], scoreOrder);
+  const goTo = useCallback(
+    (id: string) => navigate({ to: "/games/$gameId", params: { gameId: id }, replace: true }),
+    [navigate],
+  );
+
+  // Warm up neighbours so moving between items is instant
+  useEffect(() => {
+    for (const item of [sequence.prev, sequence.next]) {
+      if (item) qc.prefetchQuery({ queryKey: ["games", item.id], queryFn: () => get({ data: { id: item.id } }), staleTime: 30_000 });
+    }
+  }, [sequence.prev, sequence.next, qc, get]);
+
+  const removeMusic = useServerFn(deleteGameMusic);
+
   if (all.isLoading || detail.isLoading || !all.data || !detail.data) {
     return <DetailSkeleton />;
   }
@@ -74,7 +100,7 @@ function GameDetail() {
   const categories = all.data.categories;
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-0">
+    <motion.div key={gameId} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-0">
 
       {/* ── Hero ── */}
       <div className="relative overflow-hidden rounded-2xl">
@@ -94,13 +120,16 @@ function GameDetail() {
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/60 to-background" />
         <div className="absolute inset-0 bg-gradient-to-r from-background/80 via-transparent to-transparent" />
 
-        <button
-          onClick={() => window.history.back()}
-          className="absolute top-6 right-6 z-10 inline-flex items-center gap-2 rounded-lg border border-border bg-background/95 px-4 py-2 text-sm font-medium text-foreground shadow-md backdrop-blur transition-all hover:shadow-lg hover:bg-accent hover:text-accent-foreground group"
-        >
-          <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-1" />
-          Back to library
-        </button>
+        <div className="absolute top-6 right-6 z-10 flex items-center gap-2">
+          <ItemNavigator {...sequence} onNavigate={goTo} />
+          <button
+            onClick={() => window.history.back()}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background/95 px-4 text-sm font-medium text-foreground shadow-md backdrop-blur transition-all hover:shadow-lg hover:bg-accent hover:text-accent-foreground group"
+          >
+            <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-1" />
+            <span className="hidden sm:inline">Back to library</span>
+          </button>
+        </div>
 
         {/* Hero content */}
         <div className="relative flex gap-6 p-6 sm:p-8 md:gap-8">
@@ -135,7 +164,7 @@ function GameDetail() {
               {game.hours_played != null && (
                 <>
                   <span className="h-3 w-px bg-border/60" />
-                  <span>{game.hours_played}h played</span>
+                  <span>{Number(game.hours_played)}h played</span>
                 </>
               )}
               {overall !== null && (
@@ -160,18 +189,18 @@ function GameDetail() {
             {(neighbors.above.length > 0 || neighbors.below.length > 0) && (
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {neighbors.above.slice(0, 2).map((g) => (
-                  <span key={g.id} className="inline-flex items-center gap-1 rounded-full bg-muted/50 border border-border/40 px-2.5 py-0.5 text-xs text-muted-foreground">
+                  <button key={g.id} type="button" onClick={() => goTo(g.id)} className="inline-flex items-center gap-1 rounded-full bg-muted/50 border border-border/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground">
                     <span className="text-[10px] opacity-60">↑</span>
                     <span className="truncate max-w-[80px]">{g.title}</span>
                     <span className="font-mono opacity-70">{g.overall?.toFixed(1)}</span>
-                  </span>
+                  </button>
                 ))}
                 {neighbors.below.slice(0, 2).map((g) => (
-                  <span key={g.id} className="inline-flex items-center gap-1 rounded-full bg-muted/30 border border-border/30 px-2.5 py-0.5 text-xs text-muted-foreground/60">
+                  <button key={g.id} type="button" onClick={() => goTo(g.id)} className="inline-flex items-center gap-1 rounded-full bg-muted/30 border border-border/30 px-2.5 py-0.5 text-xs text-muted-foreground/60 transition-colors hover:border-primary/40 hover:text-foreground">
                     <span className="text-[10px] opacity-60">↓</span>
                     <span className="truncate max-w-[80px]">{g.title}</span>
                     <span className="font-mono opacity-60">{g.overall?.toFixed(1)}</span>
-                  </span>
+                  </button>
                 ))}
               </div>
             )}
@@ -196,7 +225,7 @@ function GameDetail() {
             <AddCategoryButton />
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
             {categories.map((cat) => {
               const r = detail.data!.ratings.find((x) => x.category_id === cat.id);
               return (
@@ -223,10 +252,16 @@ function GameDetail() {
       {/* Music player */}
       {game.music_url && (
         <MusicPlayer
+          key={`${game.id}:${game.music_url}:${game.music_start ?? 0}`}
           url={game.music_url}
+          start={game.music_start}
           title={game.title}
-          gameId={game.id}
-          onDeleted={() => qc.invalidateQueries({ queryKey: ["games"] })}
+          removeDescription="Remove the music track from this game?"
+          onRemove={() =>
+            removeMusic({ data: { id: game.id } })
+              .then(() => { toast.success("Music removed"); qc.invalidateQueries({ queryKey: ["games"] }); })
+              .catch(() => toast.error("Failed to remove music"))
+          }
         />
       )}
     </motion.div>
@@ -517,96 +552,13 @@ function AddCategoryButton() {
   );
 }
 
-/* ─── Music selector (detail) ─────────────────────────────────────── */
-
-type UploadedTrack = { filename: string; url: string; label: string };
-
-function MusicSelectorDetail({ value, onChange }: { value: string; onChange: (url: string) => void }) {
-  const getUploads = useServerFn(listUploads);
-  const musicQuery = useQuery<UploadedTrack[]>({
-    queryKey: ["uploaded-tracks"],
-    queryFn: async () => getUploads(),
-    staleTime: 30_000,
-  });
-  const tracks = musicQuery.data ?? [];
-
-  return (
-    <div className="space-y-2">
-      <Select
-        value={value && tracks.some((t) => t.url === value) ? value : "__none__"}
-        onValueChange={(v) => onChange(v === "__none__" ? "" : v)}
-        disabled={musicQuery.isLoading}
-      >
-        <SelectTrigger className="w-full h-8 text-xs">
-          <SelectValue placeholder={musicQuery.isLoading ? "Loading…" : "Pick a track…"} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__none__">— No selection —</SelectItem>
-          {tracks.length === 0 && !musicQuery.isLoading && (
-            <SelectItem value="__empty__" disabled>No tracks uploaded yet</SelectItem>
-          )}
-          {tracks.map((t) => (
-            <SelectItem key={t.url} value={t.url}>
-              <span className="flex items-center gap-1.5 text-xs">
-                <Music2 className="h-3 w-3 text-primary" />
-                {t.label}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <div className="flex gap-2">
-        <Input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Music URL (mp3)"
-          className="h-8 text-xs"
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            className="shrink-0 rounded-md px-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-      <Button asChild variant="outline" size="sm" type="button" className="w-full h-8 text-xs">
-        <label className="cursor-pointer">
-          Upload audio file
-          <input
-            type="file" accept="audio/*" className="hidden"
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              const toastId = toast.loading("Uploading…");
-              try {
-                const fd = new FormData();
-                fd.append("file", file);
-                const res = await fetch("/api/upload", { method: "POST", body: fd });
-                if (!res.ok) throw new Error("Upload failed");
-                const data = await res.json();
-                onChange(data.url);
-                toast.success("Uploaded!", { id: toastId });
-              } catch {
-                toast.error("Failed to upload", { id: toastId });
-              }
-            }}
-          />
-        </label>
-      </Button>
-    </div>
-  );
-}
-
 /* ─── Edit meta card ──────────────────────────────────────────────── */
 
 function EditMetaCard({
   game,
   onSaved,
 }: {
-  game: { id: string; title: string; cover_url: string | null; release_date: string | null; music_url: string | null; hours_played: number | null };
+  game: { id: string; title: string; cover_url: string | null; release_date: string | null; music_url: string | null; music_start: number | null; hours_played: number | null };
   onSaved: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -615,6 +567,7 @@ function EditMetaCard({
     cover_url: game.cover_url ?? "",
     release_date: game.release_date ?? "",
     music_url: game.music_url ?? "",
+    music_start: game.music_start,
     hours_played: game.hours_played != null ? String(game.hours_played) : "",
   });
 
@@ -628,10 +581,12 @@ function EditMetaCard({
           cover_url: form.cover_url || null,
           release_date: form.release_date || null,
           music_url: form.music_url || null,
-          hours_played: form.hours_played ? parseInt(form.hours_played) : null,
+          music_start: form.music_url ? form.music_start : null,
+          hours_played: parseDecimal(form.hours_played),
         },
       }),
     onSuccess: () => { toast.success("Saved"); setEditing(false); onSaved(); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to save"),
   });
 
   if (!editing) {
@@ -651,7 +606,13 @@ function EditMetaCard({
       animate={{ opacity: 1, y: 0 }}
       className="rounded-xl border border-border/60 bg-card p-4 space-y-3"
     >
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60">Edit details</p>
+      <button
+        onClick={() => setEditing(false)}
+        className="flex w-full items-center justify-between rounded-lg px-1 py-0.5 text-xs font-medium uppercase tracking-wider text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+      >
+        <span>Edit details</span>
+        <ChevronUp className="h-3 w-3" />
+      </button>
 
       <div className="space-y-1.5">
         <label className="text-xs text-muted-foreground">Title</label>
@@ -671,10 +632,10 @@ function EditMetaCard({
         <div className="space-y-1.5">
           <label className="text-xs text-muted-foreground">Hours played</label>
           <Input
-            type="number" min="0" max="99999"
+            type="number" min="0" max="99999" step="any" inputMode="decimal"
             value={form.hours_played}
             onChange={(e) => setForm({ ...form, hours_played: e.target.value })}
-            placeholder="0"
+            placeholder="0.0"
             className="h-8 text-sm"
           />
         </div>
@@ -684,9 +645,9 @@ function EditMetaCard({
         <label className="text-xs text-muted-foreground flex items-center gap-1.5">
           <Music2 className="h-3 w-3" /> Music
         </label>
-        <MusicSelectorDetail
-          value={form.music_url}
-          onChange={(url) => setForm((f) => ({ ...f, music_url: url }))}
+        <MusicPicker
+          value={{ url: form.music_url, start: form.music_start }}
+          onChange={({ url, start }) => setForm((f) => ({ ...f, music_url: url, music_start: start }))}
         />
       </div>
 
@@ -698,168 +659,6 @@ function EditMetaCard({
           Cancel
         </Button>
       </div>
-    </motion.div>
-  );
-}
-
-/* ─── Music player ────────────────────────────────────────────────── */
-
-function MusicPlayer({ url, title, gameId, onDeleted }: { url: string; title: string; gameId: string; onDeleted: () => void }) {
-  const ref = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [minimized, setMinimized] = useState(false);
-  const [volume, setVolume] = useState(() => {
-    const saved = typeof window !== "undefined" ? localStorage.getItem("music-volume") : null;
-    return saved !== null ? Number(saved) : 0.7;
-  });
-  const [muted, setMuted] = useState(false);
-  const delMusic = useServerFn(deleteGameMusic);
-
-  const deleteMusic = useMutation({
-    mutationFn: async () => {
-      const a = ref.current;
-      if (a) { a.pause(); setPlaying(false); }
-      return delMusic({ data: { id: gameId } });
-    },
-    onSuccess: () => { toast.success("Music removed"); onDeleted(); },
-    onError: () => toast.error("Failed to remove music"),
-  });
-
-  useEffect(() => {
-    const a = ref.current;
-    if (!a) return;
-    a.volume = volume;
-    a.muted = muted;
-    a.play().then(() => setPlaying(true)).catch(() => { });
-  }, []);
-
-  useEffect(() => {
-    const a = ref.current;
-    if (!a) return;
-    a.volume = volume;
-    a.muted = muted;
-  }, [volume, muted]);
-
-  const toggle = () => {
-    const a = ref.current;
-    if (!a) return;
-    if (playing) { a.pause(); setPlaying(false); }
-    else { a.play().then(() => setPlaying(true)).catch(() => toast.error("Could not play audio")); }
-  };
-
-  return (
-    <motion.div
-      initial={{ y: 60, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ type: "spring", stiffness: 180, damping: 22 }}
-      className={`fixed bottom-5 left-5 z-50 overflow-hidden rounded-2xl border border-white/10 bg-card/70 shadow-2xl backdrop-blur-2xl transition-all ${minimized ? "w-auto" : "w-72"}`}
-    >
-      <audio ref={ref} src={url} onEnded={() => setPlaying(false)} preload="none" />
-
-      {/* Subtle top edge highlight */}
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-
-      {minimized ? (
-        <div className="flex items-center gap-3 px-3 py-2">
-          <button
-            onClick={toggle}
-            className="h-8 w-8 shrink-0 grid place-items-center rounded-full bg-primary text-primary-foreground shadow-md hover:scale-105 active:scale-95 transition-transform"
-            aria-label={playing ? "Pause" : "Play"}
-          >
-            {playing ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3 translate-x-0.5" />}
-          </button>
-          <div className="max-w-[120px]">
-            <p className="line-clamp-1 text-xs font-semibold">{title}</p>
-          </div>
-          <button
-            onClick={() => setMinimized(false)}
-            title="Expand"
-            className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors ml-1"
-          >
-            <ChevronUp className="h-4 w-4" />
-          </button>
-        </div>
-      ) : (
-        <div className="p-4 space-y-3">
-          <div className="flex items-center gap-3">
-            {/* Play/pause */}
-            <button
-              onClick={toggle}
-              className="h-11 w-11 shrink-0 grid place-items-center rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 active:scale-95 transition-transform"
-              aria-label={playing ? "Pause" : "Play"}
-            >
-              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-0.5" />}
-            </button>
-
-            {/* Title + EQ */}
-            <div className="min-w-0 flex-1">
-              <p className="line-clamp-1 text-sm font-semibold">{title}</p>
-              <div className="mt-1.5 flex h-3 items-end gap-[3px]">
-                {[0, 1, 2, 3, 4, 5].map((i) => (
-                  <motion.span
-                    key={i}
-                    className="w-[3px] rounded-full bg-primary/70"
-                    animate={playing ? {
-                      height: ["30%", "100%", "50%", "80%", "30%"],
-                    } : { height: "20%" }}
-                    transition={playing ? {
-                      duration: 0.6 + i * 0.07,
-                      repeat: Infinity,
-                      repeatType: "mirror",
-                      ease: "easeInOut",
-                      delay: i * 0.1,
-                    } : {}}
-                    style={{ display: "block" }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Controls */}
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                onClick={() => setMinimized(true)}
-                title="Minimize"
-                className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              >
-                <ChevronDown className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setMuted((m) => !m)}
-                className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-              >
-                {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-              </button>
-              <ConfirmDialog
-                trigger={
-                  <button
-                    title="Remove music"
-                    className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                }
-                title="Remove music"
-                description="Remove the music track from this game?"
-                confirmLabel="Remove"
-                onConfirm={() => deleteMusic.mutate()}
-                disabled={deleteMusic.isPending}
-              />
-            </div>
-          </div>
-
-          {/* Volume slider */}
-          <Slider
-            value={[volume * 100]}
-            min={0} max={100} step={1}
-            onValueChange={(v) => {
-              const val = v[0] / 100;
-              setVolume(val);
-              localStorage.setItem("music-volume", String(val));
-            }}
-          />
-        </div>
-      )}
     </motion.div>
   );
 }

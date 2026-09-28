@@ -1,33 +1,62 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
-import { SignJWT } from "jose";
+import { createHash, randomBytes, scrypt, timingSafeEqual } from "crypto";
+import { promisify } from "util";
+import bcrypt from "bcryptjs";
+import { getRequestIP } from "@tanstack/react-start/server";
 import { getDb } from "./db.server";
+import { startSession, endSession } from "./session.server";
+import { assertNotLimited, hit, reset } from "./rate-limit.server";
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "change-this-secret"
-);
-const JWT_EXPIRY = "7d";
+const scryptAsync = promisify(scrypt) as (password: string, salt: string, keylen: number) => Promise<Buffer>;
 
-async function signToken(userId: string): Promise<string> {
-  return new SignJWT({ sub: userId })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(JWT_EXPIRY)
-    .sign(JWT_SECRET);
+const MINUTE = 60_000;
+// Failed logins: per IP (spraying many accounts) and per email (one account from many IPs)
+const LOGIN_IP_LIMIT = 20;
+const LOGIN_EMAIL_LIMIT = 8;
+const LOGIN_WINDOW = 15 * MINUTE;
+const REGISTER_IP_LIMIT = 5;
+const REGISTER_WINDOW = 60 * MINUTE;
+
+function clientIp(): string {
+  // Behind Hostinger's proxy the socket address is the proxy itself
+  return getRequestIP({ xForwardedFor: true }) ?? "unknown";
 }
 
+// Stored format: "scrypt$<salt>$<hash>"
 async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("hex");
-  const hash = createHash("sha256").update(salt + password).digest("hex");
-  return `${salt}:${hash}`;
+  const hash = await scryptAsync(password, salt, 64);
+  return `scrypt$${salt}$${hash.toString("hex")}`;
 }
 
-// Remplace bcrypt.compare
-async function verifyPassword(password: string, stored: string): Promise<boolean> {
+function safeEqualHex(a: string, b: string): boolean {
+  const ba = Buffer.from(a, "hex");
+  const bb = Buffer.from(b, "hex");
+  return ba.length === bb.length && ba.length > 0 && timingSafeEqual(ba, bb);
+}
+
+/**
+ * Accepts every format the app has used over time:
+ * - "scrypt$salt$hash" (current)
+ * - "$2a$/$2b$…" bcrypt (first accounts)
+ * - "salt:hash" sha256 (short-lived intermediate format)
+ */
+async function verifyPassword(password: string, stored: string | null | undefined): Promise<boolean> {
+  if (!stored) return false;
+  if (stored.startsWith("scrypt$")) {
+    const [, salt, hash] = stored.split("$");
+    if (!salt || !hash) return false;
+    const attempt = await scryptAsync(password, salt, 64);
+    return safeEqualHex(hash, attempt.toString("hex"));
+  }
+  if (/^\$2[aby]\$/.test(stored)) {
+    return bcrypt.compare(password, stored);
+  }
   const [salt, hash] = stored.split(":");
+  if (!salt || !hash) return false;
   const attempt = createHash("sha256").update(salt + password).digest("hex");
-  return timingSafeEqual(Buffer.from(hash), Buffer.from(attempt));
+  return safeEqualHex(hash, attempt);
 }
 
 // ── Register ──────────────────────────────────────────────────────────────────
@@ -35,18 +64,20 @@ export const registerFn = createServerFn({ method: "POST" })
   .validator((d: unknown) =>
     z
       .object({
-        email: z.string().email(),
-        password: z.string().min(6),
-        display_name: z.string().optional(),
+        email: z.string().trim().toLowerCase().email().max(255),
+        password: z.string().min(8).max(200),
+        display_name: z.string().trim().max(100).optional(),
       })
       .parse(d)
   )
   .handler(async ({ data }) => {
-    console.log("[register] data reçu:", JSON.stringify(data));
+    const ipKey = `register:ip:${clientIp()}`;
+    assertNotLimited(ipKey, REGISTER_IP_LIMIT);
+    hit(ipKey, REGISTER_WINDOW);
+
     try {
       const db = getDb();
       const passwordHash = await hashPassword(data.password);
-      console.log("[register] hash ok");
       // Check duplicate email
       const [existing] = await db.execute(
         "SELECT id FROM users WHERE email = ? LIMIT 1",
@@ -69,13 +100,13 @@ export const registerFn = createServerFn({ method: "POST" })
       );
       const userId = (rows as { id: string }[])[0].id;
 
-      const token = await signToken(userId);
+      await startSession(userId);
       return {
-        token,
         user: { id: userId, email: data.email, display_name: displayName },
       };
     } catch (e) {
-      console.error("[register] ERREUR:", e);
+      // Never log `data`: it holds the plaintext password
+      console.error("[register] failed:", e instanceof Error ? e.message : e);
       throw e;
     }
   });
@@ -85,12 +116,17 @@ export const loginFn = createServerFn({ method: "POST" })
   .validator((d: unknown) =>
     z
       .object({
-        email: z.string().email(),
-        password: z.string().min(1),
+        email: z.string().trim().toLowerCase().email().max(255),
+        password: z.string().min(1).max(200),
       })
       .parse(d)
   )
   .handler(async ({ data }) => {
+    const ipKey = `login:ip:${clientIp()}`;
+    const emailKey = `login:email:${data.email}`;
+    assertNotLimited(ipKey, LOGIN_IP_LIMIT);
+    assertNotLimited(emailKey, LOGIN_EMAIL_LIMIT);
+
     const db = getDb();
 
     const [rows] = await db.execute(
@@ -106,14 +142,33 @@ export const loginFn = createServerFn({ method: "POST" })
       }[]
     )[0];
 
-    if (!user) throw new Error("Invalid email or password.");
+    // Hash even for unknown emails so response time doesn't reveal which accounts exist
+    const valid = user
+      ? await verifyPassword(data.password, user.password_hash)
+      : await scryptAsync(data.password, "0".repeat(32), 64).then(() => false);
+    if (!user || !valid) {
+      hit(ipKey, LOGIN_WINDOW);
+      hit(emailKey, LOGIN_WINDOW);
+      throw new Error("Invalid email or password.");
+    }
+    reset(emailKey);
 
-    const valid = await verifyPassword(data.password, user.password_hash);
-    if (!valid) throw new Error("Invalid email or password.");
+    // Upgrade legacy hashes to the current format
+    if (!user.password_hash.startsWith("scrypt$")) {
+      await db.execute("UPDATE users SET password_hash = ? WHERE id = ?", [
+        await hashPassword(data.password),
+        user.id,
+      ]);
+    }
 
-    const token = await signToken(user.id);
+    await startSession(user.id);
     return {
-      token,
       user: { id: user.id, email: user.email, display_name: user.display_name },
     };
   });
+
+// ── Logout ────────────────────────────────────────────────────────────────────
+export const logoutFn = createServerFn({ method: "POST" }).handler(async () => {
+  endSession();
+  return { ok: true };
+});

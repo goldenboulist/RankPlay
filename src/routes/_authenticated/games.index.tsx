@@ -4,16 +4,20 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listGames, createGame, toggleFavorite, deleteGame } from "@/lib/games.functions";
+import { searchSteamGames, getSteamGameDetails, type SteamSearchResult } from "@/lib/steam.functions";
 import { withOverall } from "@/lib/scoring";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Heart, Plus, Search, Trash2, Star, Music2, SlidersHorizontal, LayoutGrid } from "@/lib/icons";
+import { Heart, Plus, Search, Trash2, Star, Music2, SlidersHorizontal, LayoutGrid, Loader2 } from "@/lib/icons";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
+import { MusicPicker } from "@/components/music-picker";
+import { rememberSequence } from "@/components/item-navigator";
+import { parseDecimal } from "@/lib/timecode";
 
 export const Route = createFileRoute("/_authenticated/games/")({
   validateSearch: (s: Record<string, unknown>) => ({
@@ -90,6 +94,11 @@ function GamesPage() {
     });
     return games;
   }, [query.data, search, sort, categoryFilter, favOnly]);
+
+  // Detail pages navigate prev/next in the order currently shown here
+  useEffect(() => {
+    if (query.data) rememberSequence("games", enriched.map((g) => g.id));
+  }, [enriched, query.data]);
 
   if (query.isLoading) return <PageLoading />;
 
@@ -480,99 +489,12 @@ function GameCard({
   );
 }
 
-/* ─── Music selector ──────────────────────────────────────────────── */
-
-type UploadedTrack = { filename: string; url: string; label: string };
-
-function useMusicTracks() {
-  return useQuery<UploadedTrack[]>({
-    queryKey: ["uploaded-tracks"],
-    queryFn: async () => {
-      const res = await fetch("/api/list-uploads");
-      if (!res.ok) throw new Error("Failed to list uploads");
-      return res.json();
-    },
-    staleTime: 30_000,
-  });
-}
-
-function MusicSelector({ value, onChange }: { value: string; onChange: (url: string) => void }) {
-  const musicQuery = useMusicTracks();
-  const tracks = musicQuery.data ?? [];
-
-  return (
-    <div className="space-y-2">
-      <Label className="flex items-center gap-1.5 text-sm">
-        <Music2 className="h-3.5 w-3.5" /> Music
-      </Label>
-      <Select
-        value={value && tracks.some((t) => t.url === value) ? value : "__none__"}
-        onValueChange={(v) => onChange(v === "__none__" ? "" : v)}
-        disabled={musicQuery.isLoading}
-      >
-        <SelectTrigger className="w-full">
-          <SelectValue placeholder={musicQuery.isLoading ? "Loading tracks…" : "Pick an uploaded track…"} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__none__">— No selection —</SelectItem>
-          {tracks.length === 0 && !musicQuery.isLoading && (
-            <SelectItem value="__empty__" disabled>No tracks uploaded yet</SelectItem>
-          )}
-          {tracks.map((t) => (
-            <SelectItem key={t.url} value={t.url}>
-              <span className="flex items-center gap-2">
-                <Music2 className="h-3.5 w-3.5 text-primary" />
-                {t.label}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <div className="flex gap-2">
-        <Input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="https://...mp3 or paste URL"
-          className="text-sm"
-        />
-        <Button asChild variant="secondary" type="button" className="shrink-0">
-          <label className="cursor-pointer">
-            Upload
-            <input
-              type="file"
-              accept="audio/*"
-              className="hidden"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const toastId = toast.loading("Uploading…");
-                try {
-                  const fd = new FormData();
-                  fd.append("file", file);
-                  const res = await fetch("/api/upload", { method: "POST", body: fd });
-                  if (!res.ok) throw new Error("Upload failed");
-                  const data = await res.json();
-                  onChange(data.url);
-                  toast.success("Uploaded!", { id: toastId });
-                } catch {
-                  toast.error("Failed to upload", { id: toastId });
-                }
-              }}
-            />
-          </label>
-        </Button>
-      </div>
-      {value && <p className="truncate text-xs text-muted-foreground">{value}</p>}
-    </div>
-  );
-}
-
 /* ─── Add game dialog ─────────────────────────────────────────────── */
 
 function AddGameDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
-    title: "", cover_url: "", release_date: "", music_url: "", hours_played: "",
+    title: "", cover_url: "", release_date: "", music_url: "", music_start: null as number | null, hours_played: "",
   });
   const create = useServerFn(createGame);
   const mut = useMutation({
@@ -583,12 +505,13 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
           cover_url: form.cover_url || null,
           release_date: form.release_date || null,
           music_url: form.music_url || null,
-          hours_played: form.hours_played ? parseInt(form.hours_played) : null,
+          music_start: form.music_url ? form.music_start : null,
+          hours_played: parseDecimal(form.hours_played),
         },
       }),
     onSuccess: () => {
       toast.success("Game added");
-      setForm({ title: "", cover_url: "", release_date: "", music_url: "", hours_played: "" });
+      setForm({ title: "", cover_url: "", release_date: "", music_url: "", music_start: null, hours_played: "" });
       setOpen(false);
       onCreated();
     },
@@ -611,6 +534,17 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
           onSubmit={(e) => { e.preventDefault(); mut.mutate(); }}
           className="space-y-4 pt-1"
         >
+          <SteamSearch
+            onPick={(d) =>
+              setForm((f) => ({
+                ...f,
+                title: d.title,
+                cover_url: d.cover_url ?? "",
+                release_date: d.release_date ?? "",
+              }))
+            }
+          />
+
           <div className="space-y-1.5">
             <Label className="text-sm">Title <span className="text-destructive">*</span></Label>
             <Input
@@ -618,17 +552,21 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               placeholder="e.g. Elden Ring"
-              autoFocus
             />
           </div>
 
           <div className="space-y-1.5">
             <Label className="text-sm">Cover image URL</Label>
-            <Input
-              value={form.cover_url}
-              onChange={(e) => setForm({ ...form, cover_url: e.target.value })}
-              placeholder="https://…"
-            />
+            <div className="flex items-center gap-3">
+              {form.cover_url && (
+                <img src={form.cover_url} alt="" className="h-14 w-[42px] shrink-0 rounded object-cover bg-muted" />
+              )}
+              <Input
+                value={form.cover_url}
+                onChange={(e) => setForm({ ...form, cover_url: e.target.value })}
+                placeholder="https://…"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -646,17 +584,24 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
                 type="number"
                 min="0"
                 max="99999"
+                step="any"
+                inputMode="decimal"
                 value={form.hours_played}
                 onChange={(e) => setForm({ ...form, hours_played: e.target.value })}
-                placeholder="0"
+                placeholder="0.0"
               />
             </div>
           </div>
 
-          <MusicSelector
-            value={form.music_url}
-            onChange={(url) => setForm((f) => ({ ...f, music_url: url }))}
-          />
+          <div className="space-y-1.5">
+            <Label className="flex items-center gap-1.5 text-sm">
+              <Music2 className="h-3.5 w-3.5" /> Music
+            </Label>
+            <MusicPicker
+              value={{ url: form.music_url, start: form.music_start }}
+              onChange={({ url, start }) => setForm((f) => ({ ...f, music_url: url, music_start: start }))}
+            />
+          </div>
 
           <DialogFooter className="pt-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
@@ -669,5 +614,90 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+/* ─── Steam search (prefills the add form) ────────────────────────── */
+
+function SteamSearch({ onPick }: { onPick: (d: { title: string; cover_url: string | null; release_date: string | null }) => void }) {
+  const search = useServerFn(searchSteamGames);
+  const details = useServerFn(getSteamGameDetails);
+  const [term, setTerm] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(term.trim()), 300);
+    return () => clearTimeout(t);
+  }, [term]);
+
+  const results = useQuery({
+    queryKey: ["steam-search", debounced],
+    queryFn: () => search({ data: { term: debounced } }),
+    enabled: debounced.length >= 2,
+    staleTime: 5 * 60_000,
+  });
+
+  const pick = useMutation({
+    mutationFn: (r: SteamSearchResult) => details({ data: { appId: r.appId } }),
+    onSuccess: (d) => {
+      onPick(d);
+      setTerm("");
+      setOpen(false);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Steam lookup failed"),
+  });
+
+  const items = results.data ?? [];
+  const showList = open && debounced.length >= 2;
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-sm">Search on Steam</Label>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={term}
+          onChange={(e) => { setTerm(e.target.value); setOpen(true); }}
+          onKeyDown={(e) => {
+            // Enter picks the first hit instead of submitting the form
+            if (e.key === "Enter") {
+              e.preventDefault();
+              if (items[0]) pick.mutate(items[0]);
+            }
+          }}
+          placeholder="Type a game name to autofill…"
+          className="pl-9 pr-9"
+          autoFocus
+        />
+        {(results.isFetching || pick.isPending) && (
+          <Loader2 className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+        )}
+      </div>
+
+      {showList && (
+        <div className="max-h-64 overflow-y-auto rounded-md border border-border/50 bg-muted/20">
+          {results.isError ? (
+            <p className="px-3 py-2 text-xs text-muted-foreground">Steam is unreachable — fill the fields manually.</p>
+          ) : items.length === 0 ? (
+            !results.isFetching && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">No Steam results — fill the fields manually.</p>
+            )
+          ) : (
+            items.map((r) => (
+              <button
+                key={r.appId}
+                type="button"
+                disabled={pick.isPending}
+                onClick={() => pick.mutate(r)}
+                className="flex w-full items-center gap-3 px-2 py-1.5 text-left text-sm hover:bg-muted/60 disabled:opacity-50"
+              >
+                <img src={r.thumb} alt="" className="h-8 w-[85px] shrink-0 rounded object-cover" loading="lazy" />
+                <span className="line-clamp-1">{r.name}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }

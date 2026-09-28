@@ -1,31 +1,40 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useEffect, useState } from "react";
+import { useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip,
-  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
-} from "recharts";
 import { getUserDashboard } from "@/lib/users.functions";
 import { withOverall } from "@/lib/scoring";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
+import { rememberSequence } from "@/components/item-navigator";
 import {
-  Trophy, Library, Star, TrendingUp, TrendingDown, Gauge, Film, Tv,
+  Trophy, Star, Film, Tv, Heart, Search, SlidersHorizontal,
   ArrowLeft, UserCircle, CalendarDays,
 } from "@/lib/icons";
 
 // ─── Route ────────────────────────────────────────────────────────────────────
 export const Route = createFileRoute("/_authenticated/users/$userId")({
+  // All optional so plain links to a profile don't have to spell out the filters
+  validateSearch: (s: Record<string, unknown>): {
+    tab?: "games" | "media";
+    type?: "all" | "movie" | "series";
+    category?: string;
+    search?: string;
+    sort?: string;
+    favOnly?: boolean;
+  } => ({
+    tab: s.tab === "media" ? "media" : undefined,
+    type: s.type === "movie" || s.type === "series" ? s.type : undefined,
+    category: typeof s.category === "string" ? s.category : undefined,
+    search: typeof s.search === "string" ? s.search : undefined,
+    sort: typeof s.sort === "string" ? s.sort : undefined,
+    favOnly: s.favOnly === true || s.favOnly === "true" || undefined,
+  }),
   head: () => ({ meta: [{ title: "User Profile" }] }),
   component: UserProfilePage,
 });
-
-// ─── Medal colors ─────────────────────────────────────────────────────────────
-const MEDAL_CSS = [
-  "var(--color-gold, #c9913a)",
-  "var(--color-silver, #9ca3af)",
-  "var(--color-bronze, #a16207)",
-] as const;
 
 // ─── Avatar gradients (same logic as list page) ───────────────────────────────
 const AVATAR_GRADIENTS = [
@@ -45,7 +54,7 @@ function avatarGradient(id: string) {
   return AVATAR_GRADIENTS[Math.abs(hash) % AVATAR_GRADIENTS.length];
 }
 
-function getInitials(user: { display_name: string | null; email: string }) {
+function getInitials(user: { display_name: string | null }) {
   if (user.display_name) {
     return user.display_name
       .split(" ")
@@ -54,7 +63,7 @@ function getInitials(user: { display_name: string | null; email: string }) {
       .toUpperCase()
       .slice(0, 2);
   }
-  return user.email[0].toUpperCase();
+  return "?";
 }
 
 function formatDate(dateStr: string) {
@@ -65,377 +74,387 @@ function formatDate(dateStr: string) {
   });
 }
 
-// ─── Animated counter ─────────────────────────────────────────────────────────
-function Counter({ value, decimals = 0 }: { value: number; decimals?: number }) {
-  const [v, setV] = useState(0);
-  useEffect(() => {
-    const start = performance.now();
-    const dur = 1100;
-    let raf = 0;
-    const tick = (t: number) => {
-      const p = Math.min(1, (t - start) / dur);
-      setV(value * (1 - Math.pow(1 - p, 4)));
-      if (p < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [value]);
-  return <>{v.toFixed(decimals)}</>;
-}
+// ─── Library view (read-only variant of the Games / Media pages) ─────────────
+type LibraryKind = "games" | "media";
 
-// ─── computeStats (same logic as Dashboard) ───────────────────────────────────
-function computeStats(items: any[], ratings: any[], categories: any[], idKey: "game_id" | "media_id") {
-  const enriched = withOverall(items, ratings, categories, idKey).filter((g: any) => g.overall !== null);
-  const sorted = [...enriched].sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0));
-  const avg = enriched.length
-    ? enriched.reduce((a, b) => a + (b.overall ?? 0), 0) / enriched.length
-    : 0;
-  const buckets = Array.from({ length: 10 }, (_, i) => ({ range: `${i}–${i + 1}`, count: 0 }));
-  enriched.forEach((g) => { buckets[Math.min(9, Math.floor(g.overall ?? 0))].count++; });
-  const catTotals = new Map();
-  ratings.forEach((r: any) => {
-    const cat = categories.find((c: any) => c.id === r.category_id);
-    if (!cat) return;
-    const cur = catTotals.get(cat.id) ?? { sum: 0, count: 0, name: cat.name };
-    cur.sum += Number(r.score); cur.count++;
-    catTotals.set(cat.id, cur);
-  });
-  const catData = Array.from(catTotals.values()).map((c: any) => ({
-    name: c.name, value: +(c.sum / c.count).toFixed(2),
-  }));
-  const catTop3 = categories.map((cat: any) => {
-    const topArr = ratings
-      .filter((r: any) => r.category_id === cat.id)
-      .flatMap((r: any) => {
-        const item = items.find((x: any) => x.id === r[idKey]);
-        return item ? [{ id: item.id, title: item.title, cover_url: item.cover_url ?? null, score: Number(r.score) }] : [];
-      })
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 3);
-    return { category: cat, top: topArr };
-  }).filter((c: any) => c.top.length > 0);
-  return { total: items.length, avg, top: sorted[0], bottom: sorted[sorted.length - 1], sorted, buckets, catData, catTop3 };
-}
+type LibraryItem = {
+  id: string;
+  title: string;
+  cover_url: string | null;
+  release_date: string | null;
+  hours_played?: number | null;
+  media_type?: "movie" | "series";
+};
 
-// ─── Stat card ────────────────────────────────────────────────────────────────
-function StatCard({ icon: Icon, label, value, sub, gold }: {
-  icon: React.ComponentType<any>; label: string; value: React.ReactNode; sub?: string; gold?: boolean;
+type LibraryRating = { category_id: string; score: number | string } & Record<string, any>;
+
+type LibraryCategory = {
+  id: string;
+  name: string;
+  icon: string | null;
+  coefficient: number | string;
+  is_default?: boolean | number;
+};
+
+function LibraryView({ userId, kind, items, ratings, categories, favoriteIds }: {
+  userId: string;
+  kind: LibraryKind;
+  items: LibraryItem[];
+  ratings: LibraryRating[];
+  categories: LibraryCategory[];
+  favoriteIds: string[];
 }) {
+  const idKey = kind === "games" ? "game_id" : "media_id";
+  const {
+    type = "all", category: categoryFilter = "all", search = "", sort = "score_desc", favOnly = false,
+  } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const setFilter = (patch: Partial<ReturnType<typeof Route.useSearch>>) =>
+    navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
+  const setType = (v: "all" | "movie" | "series") => setFilter({ type: v });
+  const setSearch = (v: string) => setFilter({ search: v });
+  const setCategoryFilter = (v: string) => setFilter({ category: v });
+  const setSort = (v: string) => setFilter({ sort: v });
+  const setFavOnly = (fn: (prev: boolean) => boolean) => setFilter({ favOnly: fn(favOnly) });
+
+  useEffect(() => {
+    const id = sessionStorage.getItem("scrollToUserItem");
+    if (!id) return;
+    sessionStorage.removeItem("scrollToUserItem");
+    document.getElementById("item-" + id)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, []);
+
+  const scoreIn = (itemId: string, categoryId: string) => {
+    const r = ratings.find((x) => x[idKey] === itemId && x.category_id === categoryId);
+    return r ? Number(r.score) : null;
+  };
+
+  const enriched = useMemo(() => {
+    const favSet = new Set(favoriteIds);
+    let list = withOverall(items, ratings as any, categories, idKey).map((it) => ({
+      ...it,
+      isFavorite: favSet.has(it.id),
+    }));
+    if (kind === "media" && type !== "all") list = list.filter((m) => m.media_type === type);
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      list = list.filter((it) => it.title.toLowerCase().includes(s));
+    }
+    if (categoryFilter !== "all") list = list.filter((it) => scoreIn(it.id, categoryFilter) !== null);
+    if (favOnly) list = list.filter((it) => it.isFavorite);
+    list.sort((a, b) => {
+      if (sort === "score_desc") {
+        if (categoryFilter !== "all") {
+          return (scoreIn(b.id, categoryFilter) ?? -1) - (scoreIn(a.id, categoryFilter) ?? -1);
+        }
+        return (b.overall ?? -1) - (a.overall ?? -1);
+      }
+      if (sort === "score_asc") {
+        if (categoryFilter !== "all") {
+          return (scoreIn(a.id, categoryFilter) ?? 11) - (scoreIn(b.id, categoryFilter) ?? 11);
+        }
+        return (a.overall ?? 11) - (b.overall ?? 11);
+      }
+      if (sort === "title") return a.title.localeCompare(b.title);
+      if (sort === "release") return (b.release_date ?? "").localeCompare(a.release_date ?? "");
+      return 0;
+    });
+    return list;
+  }, [items, ratings, categories, favoriteIds, kind, type, search, categoryFilter, sort, favOnly]);
+
+  // Detail pages navigate prev/next in the order currently shown here
+  useEffect(() => {
+    rememberSequence(kind === "games" ? "user-games" : "user-media", enriched.map((it) => it.id));
+  }, [enriched, kind]);
+
+  const openItem = (itemId: string) => {
+    sessionStorage.setItem("scrollToUserItem", itemId);
+    navigate({ to: "/users/$userId/$kind/$itemId", params: { userId, kind, itemId } });
+  };
+
+  const hasFilters = !!(search || categoryFilter !== "all" || favOnly || (kind === "media" && type !== "all"));
+  const activeCategoryName = categories.find((c) => c.id === categoryFilter)?.name ?? null;
+  const noun = kind === "games"
+    ? (enriched.length === 1 ? "game" : "games")
+    : (enriched.length === 1 ? "title" : "titles");
+
   return (
-    <div className={[
-      "relative overflow-hidden rounded-xl border p-5 transition-colors",
-      gold
-        ? "border-[var(--color-gold,#c9913a)]/20 bg-[var(--color-gold,#c9913a)]/5"
-        : "border-border/50 bg-card",
-    ].join(" ")}>
-      {gold && (
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,var(--color-gold,#c9913a)/8%,transparent_60%)]" />
-      )}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-            {label}
-          </p>
-          <p className={[
-            "mt-2.5 text-[38px] font-light leading-none tabular-nums",
-            gold ? "text-[var(--color-gold,#c9913a)]" : "text-foreground",
-          ].join(" ")}>
-            {value}
-          </p>
-          {sub && (
-            <p className="mt-2 truncate text-[11px] text-muted-foreground">{sub}</p>
-          )}
+    <div className="space-y-8">
+      {/* ── Filter toolbar ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Search */}
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search titles…"
+            className="pl-9 h-9 text-sm bg-muted/30 border-border/50 focus:bg-background"
+          />
         </div>
-        <div className={[
-          "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-          gold ? "bg-[var(--color-gold,#c9913a)]/15" : "bg-muted/40",
-        ].join(" ")}>
-          <Icon className={[
-            "h-3.5 w-3.5",
-            gold ? "text-[var(--color-gold,#c9913a)]" : "text-muted-foreground",
-          ].join(" ")} />
+
+        {/* Type switch chips */}
+        {kind === "media" && (
+          <div className="flex items-center gap-2">
+            {(["all", "movie", "series"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setType(t)}
+                className={[
+                  "inline-flex items-center gap-1.5 h-8 px-4 rounded-full text-xs font-medium transition-colors",
+                  type === t
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+                ].join(" ")}
+              >
+                {t === "all" && <Star className="h-3.5 w-3.5" />}
+                {t === "movie" && <Film className="h-3.5 w-3.5" />}
+                {t === "series" && <Tv className="h-3.5 w-3.5" />}
+                {t === "all" ? "All" : t === "movie" ? "Movies" : "Series"}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 ml-auto flex-wrap">
+          {/* Category filter */}
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="h-9 w-auto min-w-[140px] text-sm gap-1.5 bg-muted/30 border-border/50">
+              <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <SelectValue placeholder="All categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All categories</SelectItem>
+              {categories.filter((c) => !c.is_default).map((c) => {
+                const Icon = c.icon && CATEGORY_ICONS[c.icon as CategoryIconName];
+                return (
+                  <SelectItem key={c.id} value={c.id}>
+                    <div className="flex items-center gap-2">
+                      {Icon && <Icon className="w-3.5 h-3.5" />}
+                      <span>{c.name}</span>
+                    </div>
+                  </SelectItem>
+                );
+              })}
+            </SelectContent>
+          </Select>
+
+          {/* Sort */}
+          <Select value={sort} onValueChange={setSort}>
+            <SelectTrigger className="h-9 w-auto min-w-[180px] text-sm bg-muted/30 border-border/50">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="score_desc">
+                {categoryFilter === "all" ? "Score: High → Low" : "Category: High → Low"}
+              </SelectItem>
+              <SelectItem value="score_asc">
+                {categoryFilter === "all" ? "Score: Low → High" : "Category: Low → High"}
+              </SelectItem>
+              <SelectItem value="title">Title (A–Z)</SelectItem>
+              <SelectItem value="release">Newest release</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Favorites toggle */}
+          <button
+            onClick={() => setFavOnly((v) => !v)}
+            className={[
+              "inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-sm font-medium transition-colors",
+              favOnly
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted/30 border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60",
+            ].join(" ")}
+          >
+            <Heart className={`h-3.5 w-3.5 ${favOnly ? "fill-current" : ""}`} />
+            Favorites
+          </button>
         </div>
       </div>
-    </div>
-  );
-}
 
-// ─── Podium ───────────────────────────────────────────────────────────────────
-function Podium({ items, typeLabel }: { items: any[]; typeLabel: string }) {
-  if (!items.length) return null;
-  const [first, second, third] = items;
-  const slots = [second, first, third].filter(Boolean);
-  const rankOf = (vi: number) => (vi === 1 ? 1 : vi === 0 ? 2 : 3);
+      {/* ── Active filter context label ── */}
+      {hasFilters && (
+        <motion.p
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-xs text-muted-foreground -mt-4"
+        >
+          Showing <span className="text-foreground font-medium">{enriched.length}</span> {noun}
+          {search && <> matching <span className="text-foreground font-medium">"{search}"</span></>}
+          {categoryFilter !== "all" && (
+            <> in <span className="text-foreground font-medium">{activeCategoryName}</span></>
+          )}
+          {kind === "media" && type !== "all" && <> · {type === "movie" ? "movies" : "series"} only</>}
+          {favOnly && <> · favorites only</>}
+        </motion.p>
+      )}
 
-  return (
-    <div className="flex items-end justify-center gap-2 px-4 pt-6 pb-0">
-      {slots.map((item, vi) => {
-        const rank = rankOf(vi);
-        const isFirst = rank === 1;
-        const pedH = isFirst ? 52 : rank === 2 ? 32 : 18;
-        const color = MEDAL_CSS[rank - 1];
-
-        return (
-          <motion.div
-            key={item.id}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.05 + vi * 0.08, duration: 0.35 }}
-            style={{ flex: isFirst ? "0 0 192px" : "0 0 150px" }}
-          >
-            {/* Card */}
-            <div className={[
-              "rounded-t-xl border-x border-t px-3 pb-4 pt-4 flex flex-col items-center gap-2.5",
-              isFirst
-                ? "bg-card border-[var(--color-gold,#c9913a)]/20 relative overflow-hidden"
-                : "bg-muted/30 border-border/40",
-            ].join(" ")}>
-              {isFirst && (
-                <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,var(--color-gold,#c9913a)/8%,transparent_65%)]" />
-              )}
-              <span
-                className="text-[10px] font-semibold uppercase tracking-[0.14em]"
-                style={{ color }}
-              >
-                {["1st", "2nd", "3rd"][rank - 1]}
-              </span>
-              {item.cover_url ? (
-                <img
-                  src={item.cover_url} alt={item.title}
-                  className="rounded-md object-cover shadow-md"
-                  style={{ width: isFirst ? 68 : 50, height: isFirst ? 90 : 66 }}
-                />
-              ) : (
-                <div
-                  className="rounded-md bg-muted grid place-items-center"
-                  style={{ width: isFirst ? 68 : 50, height: isFirst ? 90 : 66 }}
-                >
-                  <Star className="h-5 w-5 text-muted-foreground/40" />
-                </div>
-              )}
-              <p className={[
-                "m-0 text-center font-medium leading-snug text-foreground line-clamp-2 w-full",
-                isFirst ? "text-[12px]" : "text-[11px]",
-              ].join(" ")}>
-                {item.title}
-              </p>
-              <span
-                className={["font-light tabular-nums leading-none", isFirst ? "text-[26px]" : "text-[20px]"].join(" ")}
-                style={{ color: isFirst ? "var(--color-gold, #c9913a)" : "var(--color-foreground)" }}
-              >
-                {item.overall?.toFixed(1)}
-              </span>
-            </div>
-            {/* Pedestal */}
-            <div
-              className="border-x border-b border-border/30"
-              style={{
-                height: pedH,
-                background: isFirst
-                  ? "color-mix(in oklab, var(--color-gold, #c9913a) 10%, transparent)"
-                  : "color-mix(in oklab, var(--color-border) 30%, transparent)",
-              }}
-            />
-          </motion.div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Rank badge ───────────────────────────────────────────────────────────────
-function RankBadge({ rank }: { rank: number }) {
-  const color = rank <= 3 ? MEDAL_CSS[rank - 1] : undefined;
-  return (
-    <div
-      className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[12px] font-medium"
-      style={{
-        border: `1px solid ${color ?? "var(--color-border)"}`,
-        background: color
-          ? `color-mix(in oklab, ${color} 14%, transparent)`
-          : "color-mix(in oklab, var(--color-border) 40%, transparent)",
-        color: color ?? "var(--color-muted-foreground)",
-      }}
-    >
-      {rank}
-    </div>
-  );
-}
-
-// ─── Ranked row ───────────────────────────────────────────────────────────────
-function RankedRow({ item, rank }: { item: any; rank: number }) {
-  return (
-    <div className="flex items-center gap-3 px-4 py-2.5">
-      <RankBadge rank={rank} />
-      {item.cover_url ? (
-        <img src={item.cover_url} alt="" className="h-10 w-8 shrink-0 rounded object-cover" />
+      {/* ── Grid / Empty ── */}
+      {enriched.length === 0 ? (
+        <EmptyState hasFilters={hasFilters} kind={kind} />
       ) : (
-        <div className="h-10 w-8 shrink-0 rounded bg-muted grid place-items-center">
-          <Star className="h-3 w-3 text-muted-foreground/40" />
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+          <AnimatePresence mode="popLayout">
+            {enriched.map((it, i) => (
+              <motion.div
+                layout
+                key={it.id}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.88 }}
+                transition={{ duration: 0.2, delay: Math.min(i * 0.018, 0.28) }}
+              >
+                <div id={"item-" + it.id}>
+                  <LibraryCard
+                    item={it}
+                    categoryScore={categoryFilter !== "all" ? scoreIn(it.id, categoryFilter) : undefined}
+                    categoryName={activeCategoryName}
+                    onOpen={() => openItem(it.id)}
+                  />
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
       )}
-      <p className="flex-1 truncate text-[13px] font-medium text-foreground m-0">{item.title}</p>
-      <span className="shrink-0 text-[20px] font-light tabular-nums text-muted-foreground">
-        {item.overall?.toFixed(1)}
-      </span>
     </div>
   );
 }
 
-// ─── Chart tooltip ────────────────────────────────────────────────────────────
-function ChartTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-lg border border-border/60 bg-card/90 backdrop-blur-sm px-3 py-2 shadow-xl text-xs">
-      <p className="text-muted-foreground mb-1">{label}</p>
-      {payload.map((p: any) => (
-        <p key={p.dataKey} className="text-[18px] font-light tabular-nums" style={{ color: "var(--color-gold, #c9913a)" }}>
-          {typeof p.value === "number" ? p.value.toFixed(p.dataKey === "count" ? 0 : 2) : p.value}
-        </p>
-      ))}
-    </div>
-  );
-}
-
-// ─── Section label ────────────────────────────────────────────────────────────
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/60 m-0">
-      {children}
-    </p>
-  );
-}
-
-// ─── Empty tab state ──────────────────────────────────────────────────────────
-function EmptyTabState({ typeLabel }: { typeLabel: string }) {
+// ─── Empty state ──────────────────────────────────────────────────────────────
+function EmptyState({ hasFilters, kind }: { hasFilters: boolean; kind: LibraryKind }) {
+  const noun = kind === "games" ? "games" : "titles";
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-border/40 bg-card py-20 text-center"
+      className="flex flex-col items-center justify-center py-24 text-center gap-4"
     >
-      <div className="relative w-14 h-14">
-        <div className="absolute inset-0 rounded-xl bg-muted/50 rotate-6" />
-        <div className="absolute inset-0 rounded-xl bg-muted/30 -rotate-3" />
-        <div className="relative grid h-full place-items-center rounded-xl bg-muted/60 border border-border/40">
-          <Trophy className="h-5 w-5 text-muted-foreground/50" />
+      <div className="relative w-16 h-16">
+        <div className="absolute inset-0 rounded-2xl bg-muted/50 rotate-6" />
+        <div className="absolute inset-0 rounded-2xl bg-muted/30 -rotate-3" />
+        <div className="relative grid place-items-center h-full rounded-2xl bg-muted/60 border border-border/40">
+          <Star className="h-6 w-6 text-muted-foreground/60" />
         </div>
       </div>
       <div className="space-y-1">
-        <p className="font-semibold">No rated {typeLabel.toLowerCase()} yet</p>
+        <p className="font-semibold text-foreground">
+          {hasFilters ? `No ${noun} match your filters` : "This library is empty"}
+        </p>
         <p className="text-sm text-muted-foreground max-w-[240px]">
-          This user hasn't rated any {typeLabel.toLowerCase()} yet.
+          {hasFilters
+            ? "Try adjusting your search or filters to find what you're looking for."
+            : `This user hasn't added any ${noun} yet.`}
         </p>
       </div>
     </motion.div>
   );
 }
 
-// ─── Dashboard view (read-only variant) ──────────────────────────────────────
-function DashboardView({ stats, typeLabel }: { stats: any; typeLabel: string }) {
-  if (!stats || stats.sorted.length === 0) {
-    return <EmptyTabState typeLabel={typeLabel} />;
-  }
-
-  const rest = stats.sorted.slice(3, 8);
+// ─── Library card (read-only: no favorite toggle, no delete) ─────────────────
+// categoryScore: undefined = no category filter, null = filtered but unrated
+function LibraryCard({ item, categoryScore, categoryName, onOpen }: {
+  item: LibraryItem & { overall: number | null; isFavorite: boolean };
+  categoryScore: number | null | undefined;
+  categoryName: string | null;
+  onOpen: () => void;
+}) {
+  const TypeIcon = item.media_type === "series" ? Tv : item.media_type === "movie" ? Film : Star;
+  const filtered = categoryScore !== undefined;
 
   return (
-    <div className="space-y-8">
-      {/* ── Stat cards ── */}
-      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        {[
-          { icon: Library, label: `${typeLabel} rated`, value: <Counter value={stats.sorted.length} />, gold: false },
-          { icon: Gauge, label: "Average score", value: <Counter value={stats.avg} decimals={2} />, gold: false },
-          { icon: TrendingUp, label: "Highest rated", value: <Counter value={stats.top?.overall ?? 0} decimals={1} />, sub: stats.top?.title, gold: true },
-          { icon: TrendingDown, label: "Lowest rated", value: <Counter value={stats.bottom?.overall ?? 0} decimals={1} />, sub: stats.bottom?.title, gold: false },
-        ].map((card, i) => (
+    <div onClick={onOpen} className="group relative block overflow-hidden rounded-xl cursor-pointer">
+      {/* Cover art */}
+      <div className="relative aspect-[3/4] bg-muted overflow-hidden">
+        {item.cover_url ? (
+          <img
+            src={item.cover_url}
+            alt={item.title}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            loading="lazy"
+          />
+        ) : (
+          <div className="grid h-full w-full place-items-center bg-gradient-to-br from-muted to-muted/60">
+            <TypeIcon className="h-8 w-8 text-muted-foreground/40" />
+          </div>
+        )}
+
+        {/* Bottom gradient for text legibility */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+
+        {/* Hover overlay ring */}
+        <div className="absolute inset-0 rounded-xl ring-1 ring-inset ring-white/0 group-hover:ring-white/10 transition-all duration-300" />
+
+        {/* Media type indicator badge */}
+        {item.media_type && (
+          <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-black/40 backdrop-blur-sm border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-white/90">
+            <TypeIcon className="h-3 w-3" />
+            {item.media_type === "series" ? "Series" : "Movie"}
+          </div>
+        )}
+
+        {/* Favorite indicator */}
+        {item.isFavorite && (
+          <div className="absolute right-2 top-2 h-8 w-8 grid place-items-center rounded-full bg-black/40 backdrop-blur-sm border border-white/10 pointer-events-none">
+            <Heart className="h-3.5 w-3.5 fill-red-400 text-red-400" />
+          </div>
+        )}
+
+        {/* Overall score badge */}
+        {item.overall !== null && (
           <motion.div
-            key={card.label}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.06, duration: 0.3 }}
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 200, damping: 18 }}
+            className={[
+              "absolute bottom-2 left-2 h-10 w-10 grid place-items-center rounded-full",
+              "bg-primary text-primary-foreground font-bold text-sm",
+              "shadow-lg ring-2 ring-black/20",
+              filtered ? "opacity-60 scale-90" : "",
+            ].join(" ")}
           >
-            <StatCard {...card} />
+            {item.overall.toFixed(1)}
           </motion.div>
-        ))}
+        )}
+
+        {/* Category score badge */}
+        {filtered && categoryScore !== null && (
+          <motion.div
+            initial={{ scale: 0, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="absolute bottom-2 right-2 flex flex-col items-center justify-center rounded-lg bg-primary text-primary-foreground px-2 py-1 shadow-lg ring-1 ring-black/20 min-w-[44px]"
+          >
+            <span className="text-[9px] font-medium leading-none opacity-75 truncate max-w-[52px]">
+              {categoryName}
+            </span>
+            <span className="text-sm font-bold leading-snug">{categoryScore.toFixed(1)}</span>
+          </motion.div>
+        )}
+
+        {filtered && categoryScore === null && (
+          <div className="absolute bottom-2 right-2 flex flex-col items-center justify-center rounded-lg bg-black/50 backdrop-blur-sm text-white/50 px-2 py-1 ring-1 ring-white/10 min-w-[44px]">
+            <span className="text-[9px] font-medium leading-none truncate max-w-[52px]">
+              {categoryName}
+            </span>
+            <span className="text-sm font-bold leading-snug">—</span>
+          </div>
+        )}
       </div>
 
-      {/* ── Hall of Fame ── */}
-      <section className="space-y-3">
-        <SectionLabel>Hall of Fame</SectionLabel>
-        <div className="overflow-hidden rounded-xl border border-border/50 bg-card">
-          <Podium items={stats.sorted.slice(0, 3)} typeLabel={typeLabel} />
-          {rest.length > 0 && (
-            <div className="mt-0 border-t border-border/40 divide-y divide-border/30">
-              {rest.map((item: any, i: number) => (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.1 + i * 0.04 }}
-                >
-                  <RankedRow item={item} rank={i + 4} />
-                </motion.div>
-              ))}
-            </div>
+      {/* Card footer */}
+      <div className="px-1 pt-2 pb-1">
+        <h3 className="line-clamp-1 text-sm font-semibold leading-tight" title={item.title}>
+          {item.title}
+        </h3>
+        <div className="mt-0.5 flex items-center justify-between">
+          <span className="text-[11px] text-muted-foreground">
+            {item.release_date ? new Date(item.release_date).getFullYear() : "—"}
+          </span>
+          {item.hours_played != null && (
+            <span className="text-[11px] text-muted-foreground">{item.hours_played}h</span>
           )}
         </div>
-      </section>
-
-      {/* ── Category top 3 ── */}
-      {stats.catTop3.length > 0 && (
-        <section className="space-y-3">
-          <SectionLabel>Top 3 by category</SectionLabel>
-          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-            {stats.catTop3.map(({ category, top }: any, ci: number) => (
-              <motion.div
-                key={category.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.06 + ci * 0.06 }}
-                className="overflow-hidden rounded-xl border border-border/50 bg-card"
-              >
-                <div className="border-b border-border/40 px-4 py-2.5 text-[12px] font-medium text-muted-foreground">
-                  {category.name}
-                </div>
-                <div className="divide-y divide-border/30">
-                  {top.map((g: any, i: number) => {
-                    const color = MEDAL_CSS[i];
-                    return (
-                      <div
-                        key={g.id}
-                        className="flex items-center gap-2.5 px-3 py-2"
-                      >
-                        <div
-                          className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-medium"
-                          style={{
-                            border: `1px solid ${color}`,
-                            background: `color-mix(in oklab, ${color} 14%, transparent)`,
-                            color,
-                          }}
-                        >
-                          {i + 1}
-                        </div>
-                        {g.cover_url ? (
-                          <img src={g.cover_url} alt="" className="h-9 w-7 shrink-0 rounded object-cover" />
-                        ) : (
-                          <div className="h-9 w-7 shrink-0 rounded bg-muted grid place-items-center">
-                            <Star className="h-2.5 w-2.5 text-muted-foreground/40" />
-                          </div>
-                        )}
-                        <p className="flex-1 truncate text-[12px] font-medium text-foreground m-0">{g.title}</p>
-                        <span className="shrink-0 text-[16px] font-light tabular-nums" style={{ color }}>
-                          {g.score.toFixed(1)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </section>
-      )}
+      </div>
     </div>
   );
 }
@@ -443,11 +462,8 @@ function DashboardView({ stats, typeLabel }: { stats: any; typeLabel: string }) 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 const TABS = [
   { value: "games", label: "Games", Icon: Trophy },
-  { value: "movies", label: "Movies", Icon: Film },
-  { value: "series", label: "Series", Icon: Tv },
+  { value: "media", label: "Movies & Series", Icon: Film },
 ] as const;
-
-type TabValue = "games" | "movies" | "series";
 
 // ─── Loading skeleton ─────────────────────────────────────────────────────────
 function PageSkeleton() {
@@ -461,12 +477,15 @@ function PageSkeleton() {
           <div className="h-4 w-32 rounded bg-muted/30 animate-pulse" />
         </div>
       </div>
-      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-24 rounded-xl bg-muted/30 animate-pulse" style={{ animationDelay: `${i * 60}ms` }} />
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+        {Array.from({ length: 12 }).map((_, i) => (
+          <div
+            key={i}
+            className="aspect-[3/4] rounded-xl bg-muted/30 animate-pulse"
+            style={{ animationDelay: `${i * 40}ms` }}
+          />
         ))}
       </div>
-      <div className="rounded-xl bg-muted/20 animate-pulse h-72" />
     </div>
   );
 }
@@ -479,30 +498,29 @@ function UserProfilePage() {
     queryKey: ["user-dashboard", userId],
     queryFn: () => fetchUserDashboard({ data: { userId } }),
   });
-  const [tab, setTab] = useState<TabValue>("games");
+  const { tab = "games" } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  // Categories differ between games and media, so switching tab resets the filters
+  const setTab = (t: LibraryKind) =>
+    navigate({
+      search: { tab: t === "media" ? "media" : undefined },
+      replace: true,
+    });
 
   const data = query.data;
 
-  const gameStats = useMemo(() => {
-    if (!data) return null;
-    return computeStats(data.games.games, data.games.ratings, data.games.categories, "game_id");
+  const ratedCounts = useMemo(() => {
+    if (!data) return { games: 0, movies: 0, series: 0 };
+    const ratedGames = new Set(data.games.ratings.map((r) => r.game_id));
+    const ratedMedia = new Set(data.media.ratings.map((r) => r.media_id));
+    const countMedia = (t: "movie" | "series") =>
+      data.media.media.filter((m) => m.media_type === t && ratedMedia.has(m.id)).length;
+    return {
+      games: data.games.games.filter((g) => ratedGames.has(g.id)).length,
+      movies: countMedia("movie"),
+      series: countMedia("series"),
+    };
   }, [data]);
-
-  const movieStats = useMemo(() => {
-    if (!data) return null;
-    const movies = data.media.media.filter((m) => m.media_type === "movie");
-    const ratings = data.media.ratings.filter((r) => movies.some((m) => m.id === r.media_id));
-    return computeStats(movies, ratings, data.media.categories, "media_id");
-  }, [data]);
-
-  const seriesStats = useMemo(() => {
-    if (!data) return null;
-    const series = data.media.media.filter((m) => m.media_type === "series");
-    const ratings = data.media.ratings.filter((r) => series.some((m) => m.id === r.media_id));
-    return computeStats(series, ratings, data.media.categories, "media_id");
-  }, [data]);
-
-  const statsMap = { games: gameStats, movies: movieStats, series: seriesStats };
 
   if (query.isLoading) return <PageSkeleton />;
 
@@ -519,7 +537,7 @@ function UserProfilePage() {
   }
 
   const { user } = data;
-  const displayName = user.display_name || user.email.split("@")[0];
+  const displayName = user.display_name || "Player";
   const gradient = avatarGradient(user.id);
   const initials = getInitials(user);
 
@@ -556,7 +574,6 @@ function UserProfilePage() {
             Member profile
           </p>
           <h1 className="text-3xl font-bold tracking-tight leading-none truncate">{displayName}</h1>
-          <p className="mt-1 text-sm text-muted-foreground truncate">{user.email}</p>
           <div className="mt-2 flex items-center gap-1.5 text-[12px] text-muted-foreground/60">
             <CalendarDays className="h-3.5 w-3.5" />
             <span>Member since {formatDate(user.created_at)}</span>
@@ -566,9 +583,9 @@ function UserProfilePage() {
         {/* Summary badges */}
         <div className="flex flex-wrap gap-2 sm:shrink-0">
           {[
-            { label: "Games rated", count: gameStats?.sorted.length ?? 0, icon: Trophy },
-            { label: "Movies rated", count: movieStats?.sorted.length ?? 0, icon: Film },
-            { label: "Series rated", count: seriesStats?.sorted.length ?? 0, icon: Tv },
+            { label: "Games rated", count: ratedCounts.games, icon: Trophy },
+            { label: "Movies rated", count: ratedCounts.movies, icon: Film },
+            { label: "Series rated", count: ratedCounts.series, icon: Tv },
           ].map(({ label, count, icon: Icon }) => (
             <div
               key={label}
@@ -623,7 +640,25 @@ function UserProfilePage() {
           exit={{ opacity: 0, y: -4 }}
           transition={{ duration: 0.2 }}
         >
-          <DashboardView stats={statsMap[tab]} typeLabel={TABS.find((t) => t.value === tab)!.label} />
+          {tab === "games" ? (
+            <LibraryView
+              userId={userId}
+              kind="games"
+              items={data.games.games}
+              ratings={data.games.ratings}
+              categories={data.games.categories}
+              favoriteIds={data.games.favoriteIds}
+            />
+          ) : (
+            <LibraryView
+              userId={userId}
+              kind="media"
+              items={data.media.media}
+              ratings={data.media.ratings}
+              categories={data.media.categories}
+              favoriteIds={data.media.favoriteIds}
+            />
+          )}
         </motion.div>
       </AnimatePresence>
     </div>

@@ -76,6 +76,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <main className="mx-auto -max-w7xl px-4 py-6">{children}</main>
+      <footer className="border-t border-border/30 mt-8 py-4 px-4">
+        <div className="mx-auto flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground/50">
+          <span>© {new Date().getFullYear()} RankPlay</span>
+          <Link to="/mentions-legales" className="hover:text-muted-foreground transition-colors">Mentions légales</Link>
+          <Link to="/politique-confidentialite" className="hover:text-muted-foreground transition-colors">Politique de confidentialité</Link>
+        </div>
+      </footer>
     </div>
   );
 }

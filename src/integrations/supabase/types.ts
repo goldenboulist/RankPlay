@@ -8,6 +8,13 @@ export interface DbUser extends RowDataPacket {
   created_at: string;
 }
 
+/** What other members may see about a user — never the email. */
+export interface DbPublicUser extends RowDataPacket {
+  id: string;
+  display_name: string | null;
+  created_at: string;
+}
+
 export interface DbGame extends RowDataPacket {
   id: string;
   user_id: string;
@@ -15,6 +22,7 @@ export interface DbGame extends RowDataPacket {
   cover_url: string | null;
   release_date: string | null;
   music_url: string | null;
+  music_start: number | null;
   notes: string | null;
   hours_played: number | null;
   created_at: string;
@@ -64,6 +72,7 @@ export interface DbMedia extends RowDataPacket {
   cover_url: string | null;
   release_date: string | null;
   music_url: string | null;
+  music_start: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;

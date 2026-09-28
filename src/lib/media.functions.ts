@@ -13,8 +13,21 @@ const mediaInput = z.object({
   cover_url: z.string().trim().max(2000).optional().nullable(),
   release_date: z.string().trim().max(20).optional().nullable(),
   music_url: z.string().trim().max(2000).optional().nullable(),
+  music_start: z.number().min(0).max(86400).optional().nullable(),
   notes: z.string().trim().max(5000).optional().nullable(),
 });
+
+// Same ownership guard as games: ratings/favorites must target the caller's own rows.
+async function assertOwnsMedia(db: ReturnType<typeof getDb>, userId: string, mediaId: string, categoryId?: string) {
+  const [rows] = categoryId
+    ? await db.execute(
+        `SELECT 1 FROM media m JOIN categories_media c ON c.user_id = m.user_id
+          WHERE m.id = ? AND c.id = ? AND m.user_id = ? LIMIT 1`,
+        [mediaId, categoryId, userId]
+      )
+    : await db.execute("SELECT 1 FROM media WHERE id = ? AND user_id = ? LIMIT 1", [mediaId, userId]);
+  if ((rows as unknown[]).length === 0) throw new Error("Media not found");
+}
 
 // ── List media ─────────────────────────────────────────────────────────────────
 export const listMedia = createServerFn({ method: "GET" })
@@ -80,8 +93,8 @@ export const createMedia = createServerFn({ method: "POST" })
     const db = getDb();
 
     await db.execute(
-      `INSERT INTO media (user_id, title, media_type, cover_url, release_date, music_url, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO media (user_id, title, media_type, cover_url, release_date, music_url, music_start, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         context.userId,
         data.title,
@@ -89,6 +102,7 @@ export const createMedia = createServerFn({ method: "POST" })
         data.cover_url ?? null,
         data.release_date ?? null,
         data.music_url ?? null,
+        data.music_url ? data.music_start ?? null : null,
         data.notes ?? null,
       ]
     );
@@ -113,7 +127,7 @@ export const updateMedia = createServerFn({ method: "POST" })
     await db.execute(
       `UPDATE media
          SET title = ?, media_type = ?, cover_url = ?, release_date = ?,
-             music_url = ?, notes = ?
+             music_url = ?, music_start = ?, notes = ?
        WHERE id = ? AND user_id = ?`,
       [
         rest.title,
@@ -121,6 +135,7 @@ export const updateMedia = createServerFn({ method: "POST" })
         rest.cover_url ?? null,
         rest.release_date ?? null,
         rest.music_url ?? null,
+        rest.music_url ? rest.music_start ?? null : null,
         rest.notes ?? null,
         id,
         context.userId,
@@ -128,8 +143,8 @@ export const updateMedia = createServerFn({ method: "POST" })
     );
 
     const [rows] = await db.execute<DbMedia[]>(
-      "SELECT * FROM media WHERE id = ? LIMIT 1",
-      [id]
+      "SELECT * FROM media WHERE id = ? AND user_id = ? LIMIT 1",
+      [id, context.userId]
     );
     return (rows as DbMedia[])[0];
   });
@@ -157,6 +172,7 @@ export const toggleMediaFavorite = createServerFn({ method: "POST" })
     const db = getDb();
 
     if (data.favorite) {
+      await assertOwnsMedia(db, context.userId, data.id);
       await db.execute(
         `INSERT INTO media_favorites (user_id, media_id) VALUES (?, ?)
          ON DUPLICATE KEY UPDATE created_at = created_at`,
@@ -185,6 +201,7 @@ export const upsertMediaRating = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const db = getDb();
+    await assertOwnsMedia(db, context.userId, data.media_id, data.category_id);
 
     await db.execute(
       `INSERT INTO media_ratings (user_id, media_id, category_id, score)
@@ -280,7 +297,7 @@ export const deleteMediaMusic = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const db = getDb();
     await db.execute(
-      "UPDATE media SET music_url = NULL WHERE id = ? AND user_id = ?",
+      "UPDATE media SET music_url = NULL, music_start = NULL WHERE id = ? AND user_id = ?",
       [data.id, context.userId]
     );
     return { ok: true };

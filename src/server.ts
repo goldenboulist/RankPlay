@@ -11,15 +11,40 @@ import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 import { promises as fs } from "fs";
 import path from "path";
+import { readSessionFromRequest } from "./lib/session.server";
 
+const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
+const AUDIO_EXTENSIONS = new Set([".mp3", ".ogg", ".wav", ".flac", ".aac", ".m4a", ".opus", ".weba"]);
+
+// Uploads are served from our own origin, so anything but audio (e.g. .html/.svg)
+// would be stored XSS. Also restricted to signed-in users on our own pages.
 async function handleUpload(request: Request): Promise<Response> {
   try {
+    const fetchSite = request.headers.get("sec-fetch-site");
+    if (fetchSite !== null && fetchSite !== "same-origin") {
+      return new Response("Forbidden", { status: 403 });
+    }
+    if (!(await readSessionFromRequest(request))) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    // Reject oversized bodies before buffering them
+    if (Number(request.headers.get("content-length") ?? 0) > MAX_UPLOAD_BYTES + 64 * 1024) {
+      return new Response("File too large", { status: 413 });
+    }
+
     const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    if (!file) return new Response("No file provided", { status: 400 });
+    const file = formData.get("file");
+    if (!(file instanceof File)) return new Response("No file provided", { status: 400 });
+    if (file.size > MAX_UPLOAD_BYTES) return new Response("File too large", { status: 413 });
+
+    const ext = path.extname(file.name).toLowerCase();
+    if (!AUDIO_EXTENSIONS.has(ext) || (file.type && !file.type.startsWith("audio/"))) {
+      return new Response("Only audio files are allowed", { status: 415 });
+    }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const filename = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
+    const base = path.basename(file.name, path.extname(file.name)).replace(/[^a-zA-Z0-9-]/g, "_").slice(0, 150);
+    const filename = `${Date.now()}-${base}${ext}`;
     const filepath = path.join(process.cwd(), "public", "uploads", filename);
 
     await fs.mkdir(path.dirname(filepath), { recursive: true });

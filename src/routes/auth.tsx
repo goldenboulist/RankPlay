@@ -63,10 +63,10 @@ function AuthPage() {
         const result = await registerFn({
           data: { email, password, display_name: displayName || undefined },
         });
-        supabase.auth._setSession(result.token, result.user);
+        supabase.auth._setSession(result.user);
       } else {
         const result = await loginFn({ data: { email, password } });
-        supabase.auth._setSession(result.token, result.user);
+        supabase.auth._setSession(result.user);
       }
       navigate({ to: "/dashboard", replace: true });
     } catch (err) {
@@ -161,7 +161,7 @@ function AuthPage() {
                           onChange={(e) => setPassword(e.target.value)}
                           placeholder="Enter your password"
                           required
-                          minLength={6}
+                          minLength={mode === "signup" ? 8 : undefined}
                           autoComplete={
                             mode === "signin" ? "current-password" : "new-password"
                           }
@@ -194,6 +194,16 @@ function AuthPage() {
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {mode === "signin" ? "Sign in" : "Create account"}
                 </Button>
+
+                {mode === "signup" && (
+                  <p className="mt-3 text-center text-[11px] leading-relaxed text-muted-foreground/70">
+                    En créant un compte, vous acceptez notre{" "}
+                    <Link to="/politique-confidentialite" className="underline hover:text-muted-foreground transition-colors">
+                      Politique de confidentialité
+                    </Link>
+                    . Vos données (email, nom d’affichage) sont utilisées uniquement pour faire fonctionner le service.
+                  </p>
+                )}
               </form>
             </Tabs>
           </Card>
