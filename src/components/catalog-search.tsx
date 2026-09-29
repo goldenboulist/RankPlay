@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { describeError } from "@/lib/error-message";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Search } from "@/lib/icons";
@@ -47,7 +48,7 @@ export function CatalogSearch<T>({
       setOpen(false);
     },
     onError: (e) =>
-      toast.error(e instanceof Error ? e.message : "Lookup failed"),
+      toast.error(describeError("load the details of this result", e)),
   });
 
   const items = results.data ?? [];

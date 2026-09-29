@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Heart, Plus, Search, Trash2, Star, Music2, SlidersHorizontal, LayoutGrid, Layers } from "@/lib/icons";
 import { toast } from "sonner";
+import { describeError } from "@/lib/error-message";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
 import { MusicPicker } from "@/components/music-picker";
@@ -447,6 +448,7 @@ function GameCard({
   const toggleFav = useMutation({
     mutationFn: () => fav({ data: { id: game.id, favorite: !game.isFavorite } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["games"] }),
+    onError: (e) => toast.error(describeError(`update favorites for “${game.title}”`, e)),
   });
 
   const removeGame = useMutation({
@@ -455,6 +457,7 @@ function GameCard({
       toast.success("Game removed");
       qc.invalidateQueries({ queryKey: ["games"] });
     },
+    onError: (e) => toast.error(describeError(`remove “${game.title}”`, e)),
   });
 
   return (
@@ -630,7 +633,7 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
       setOpen(false);
       onCreated();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(describeError(`add “${form.title}”`, e)),
   });
 
   return (

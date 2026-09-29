@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { describeError } from "@/lib/error-message";
 import {
   getRecommendations,
   type Recommendation,
@@ -162,7 +163,7 @@ function RecommendationCard({
       qc.invalidateQueries({ queryKey: ["games"] });
     },
     onError: (e) =>
-      toast.error(e instanceof Error ? e.message : "Failed to add"),
+      toast.error(describeError(`add “${rec.name}”`, e)),
   });
 
   return (

@@ -7,7 +7,7 @@ import { promises as fs } from "fs";
 import { randomUUID } from "crypto";
 import path from "path";
 
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg', '.wav', '.flac', '.aac', '.m4a', '.opus', '.weba']);
+import { UPLOADS_DIR, AUDIO_EXTENSIONS } from "@/lib/uploads.server";
 const gameInput = z.object({
   title: z.string().trim().min(1).max(200),
   cover_url: z.string().trim().max(2000).optional().nullable(),
@@ -402,7 +402,7 @@ export const listUploads = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async () => {
     try {
-      const uploadsDir = path.join(process.cwd(), "public", "uploads");
+      const uploadsDir = UPLOADS_DIR;
       let files: string[] = [];
       try {
         files = await fs.readdir(uploadsDir);

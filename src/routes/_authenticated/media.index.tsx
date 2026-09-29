@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Heart, Plus, Search, Trash2, Star, Film, Tv, SlidersHorizontal, LayoutGrid } from "@/lib/icons";
 import { toast } from "sonner";
+import { describeError } from "@/lib/error-message";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
 import { rememberSequence } from "@/components/item-navigator";
@@ -399,6 +400,7 @@ function MediaCard({
   const toggleFav = useMutation({
     mutationFn: () => fav({ data: { id: item.id, favorite: !item.isFavorite } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["media"] }),
+    onError: (e) => toast.error(describeError(`update favorites for “${item.title}”`, e)),
   });
 
   const removeMedia = useMutation({
@@ -407,6 +409,7 @@ function MediaCard({
       toast.success("Removed");
       qc.invalidateQueries({ queryKey: ["media"] });
     },
+    onError: (e) => toast.error(describeError(`remove “${item.title}”`, e)),
   });
 
   const TypeIcon = item.media_type === "series" ? Tv : Film;
@@ -561,7 +564,7 @@ function AddMediaDialog({ onCreated }: { onCreated: () => void }) {
       setOpen(false);
       onCreated();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(describeError(`add “${form.title}”`, e)),
   });
 
   return (

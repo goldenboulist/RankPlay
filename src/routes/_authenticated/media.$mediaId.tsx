@@ -21,6 +21,7 @@ import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowLeft, Plus, Trash2, X, Check, Music2, Film, Tv, ChevronUp } from "@/lib/icons";
 import { toast } from "sonner";
+import { describeError } from "@/lib/error-message";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
 import { MusicPicker } from "@/components/music-picker";
@@ -255,7 +256,7 @@ function MediaDetail() {
           onRemove={() =>
             removeMusic({ data: { id: media.id } })
               .then(() => { toast.success("Music removed"); qc.invalidateQueries({ queryKey: ["media"] }); })
-              .catch(() => toast.error("Failed to remove music"))
+              .catch((e) => toast.error(describeError("remove the music", e)))
           }
         />
       )}
@@ -306,16 +307,19 @@ function RatingRow({
   const save = useMutation({
     mutationFn: (val: number) => up({ data: { media_id: mediaId, category_id: categoryId, score: val } }),
     onSuccess: () => qc.invalidateQueries(),
+    onError: (e) => toast.error(describeError(`save the “${categoryName}” rating`, e)),
   });
 
   const remove = useMutation({
     mutationFn: () => del({ data: { media_id: mediaId, category_id: categoryId } }),
     onSuccess: () => qc.invalidateQueries(),
+    onError: (e) => toast.error(describeError(`clear the “${categoryName}” rating`, e)),
   });
 
   const removeCat = useMutation({
     mutationFn: () => delCat({ data: { id: categoryId } }),
     onSuccess: () => qc.invalidateQueries(),
+    onError: (e) => toast.error(describeError(`delete the category “${categoryName}”`, e)),
   });
 
   const updateCoeff = useServerFn(updateMediaCategoryCoefficient);
@@ -324,7 +328,7 @@ function RatingRow({
   const saveCoeff = useMutation({
     mutationFn: (val: number) => updateCoeff({ data: { id: categoryId, coefficient: val } }),
     onSuccess: () => { qc.invalidateQueries(); setEditingCoeff(false); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(describeError(`update the weight of “${categoryName}”`, e)),
   });
 
   const categoryNeighbors = useMemo(() => {
@@ -486,7 +490,7 @@ function AddCategoryButton() {
   const mut = useMutation({
     mutationFn: () => create({ data: { name, icon: icon || null, coefficient } }),
     onSuccess: () => { setName(""); setIcon(""); setCoefficient(1); setOpen(false); qc.invalidateQueries(); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => toast.error(describeError(`create the category “${name}”`, e)),
   });
 
   if (!open) {
@@ -580,7 +584,7 @@ function EditMetaCard({
         },
       }),
     onSuccess: () => { toast.success("Saved"); setEditing(false); onSaved(); },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to save"),
+    onError: (e) => toast.error(describeError("save your changes", e)),
   });
 
   if (!editing) {

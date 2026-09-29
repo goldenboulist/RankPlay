@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Slider } from "@/components/ui/slider";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { formatTimecode } from "@/lib/timecode";
+import { describeAudioError, describeError } from "@/lib/error-message";
 import { ChevronDown, ChevronUp, Pause, Play, Trash2, Volume2, VolumeX } from "@/lib/icons";
 
 const RestartIcon = ({ className }: { className?: string }) => (
@@ -49,7 +50,11 @@ export function MusicPlayer({
 
   useEffect(() => () => ref.current?.pause(), []);
 
-  const play = () => ref.current?.play().catch(() => toast.error("Could not play audio"));
+  // Load failures are reported by the <audio> onError handler
+  const play = () =>
+    ref.current?.play().catch((e) => {
+      if (!ref.current?.error) toast.error(describeError(`play “${title}”`, e));
+    });
 
   const toggle = () => {
     const a = ref.current;
@@ -78,6 +83,9 @@ export function MusicPlayer({
         ref={ref}
         src={url}
         preload="auto"
+        onError={(e) => {
+          describeAudioError(e.currentTarget, url).then((msg) => toast.error(msg, { id: `audio-error:${url}` }));
+        }}
         onLoadedMetadata={(e) => {
           const a = e.currentTarget;
           setDuration(a.duration || 0);

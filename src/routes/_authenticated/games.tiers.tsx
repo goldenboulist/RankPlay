@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { describeError } from "@/lib/error-message";
 import { listGames, saveTierList } from "@/lib/games.functions";
 import { withOverall } from "@/lib/scoring";
 import { TIERS, type Tier } from "@/integrations/supabase/types";
@@ -118,7 +119,7 @@ function TierListPage() {
         },
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["games"] }),
-    onError: () => toast.error("Couldn't save the tier list"),
+    onError: (e) => toast.error(describeError("save the tier list", e)),
   });
 
   // Auto-save shortly after the last move
@@ -234,7 +235,7 @@ function TierListPage() {
             size="sm"
             className="gap-2"
             onClick={() =>
-              exportPng(board, items).catch(() => toast.error("Export failed"))
+              exportPng(board, items).catch((e) => toast.error(describeError("export the tier list image", e)))
             }
           >
             <Download className="h-4 w-4" />

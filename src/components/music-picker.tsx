@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { listUploads } from "@/lib/games.functions";
 import { formatTimecode, parseTimecode } from "@/lib/timecode";
 import { cn } from "@/lib/utils";
+import { describeAudioError, describeError, responseError } from "@/lib/error-message";
 import {
   Popover,
   PopoverContent,
@@ -31,6 +32,8 @@ import {
 } from "@/lib/icons";
 
 export type MusicValue = { url: string; start: number | null };
+
+const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
 
 type UploadedTrack = { filename: string; url: string; label: string };
 
@@ -87,18 +90,21 @@ export function MusicPicker({
 
   const upload = async (file: File) => {
     setUploading(true);
-    const toastId = toast.loading("Uploading…");
+    const toastId = toast.loading(`Uploading “${file.name}”…`);
     try {
+      if (file.size > MAX_UPLOAD_BYTES) {
+        throw new Error(`the file is ${(file.size / 1024 / 1024).toFixed(1)} MB, the limit is 30 MB`);
+      }
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!res.ok) throw new Error((await res.text()) || "Upload failed");
+      if (!res.ok) throw await responseError(res);
       const data = await res.json();
       await qc.invalidateQueries({ queryKey: ["uploaded-tracks"] });
       select(data.url);
       toast.success("Uploaded!", { id: toastId });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to upload", { id: toastId });
+      toast.error(describeError(`upload “${file.name}”`, e), { id: toastId });
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -145,7 +151,9 @@ export function MusicPicker({
                 <CommandEmpty className="py-4 text-center text-xs text-muted-foreground">
                   {tracksQuery.isLoading
                     ? "Loading tracks…"
-                    : searchLooksLikeUrl
+                    : tracksQuery.isError
+                      ? describeError("load the uploaded tracks", tracksQuery.error)
+                      : searchLooksLikeUrl
                       ? "Press the button below to use this link"
                       : "No track found"}
                 </CommandEmpty>
@@ -270,7 +278,10 @@ function TimecodeEditor({
       return;
     }
     if (a.currentTime === 0 && start) a.currentTime = start;
-    a.play().catch(() => toast.error("Could not play audio"));
+    // Load failures are reported by the <audio> onError handler
+    a.play().catch((e) => {
+      if (!a.error) toast.error(describeError("play the preview", e));
+    });
   };
 
   const commitDraft = () => {
@@ -297,6 +308,9 @@ function TimecodeEditor({
         ref={ref}
         src={url}
         preload="metadata"
+        onError={(e) => {
+          describeAudioError(e.currentTarget, url).then((msg) => toast.error(msg, { id: `audio-error:${url}` }));
+        }}
         onLoadedMetadata={(e) => {
           setDuration(e.currentTarget.duration || 0);
           if (start) e.currentTarget.currentTime = start;
