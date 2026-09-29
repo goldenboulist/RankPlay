@@ -1,5 +1,9 @@
 import { SignJWT, jwtVerify } from "jose";
-import { getCookie, setCookie, deleteCookie } from "@tanstack/react-start/server";
+import {
+  getCookie,
+  setCookie,
+  deleteCookie,
+} from "@tanstack/react-start/server";
 
 // The session JWT lives in an httpOnly cookie so page scripts (and any XSS) can't read it.
 export const SESSION_COOKIE = "rp_session";
@@ -45,7 +49,9 @@ export async function readSession(): Promise<string | null> {
 }
 
 /** For raw handlers outside TanStack's request context (see src/server.ts). */
-export function readSessionFromRequest(request: Request): Promise<string | null> {
+export function readSessionFromRequest(
+  request: Request,
+): Promise<string | null> {
   const token = (request.headers.get("cookie") ?? "")
     .split(";")
     .map((c) => c.trim())
@@ -54,10 +60,14 @@ export function readSessionFromRequest(request: Request): Promise<string | null>
   return verifySessionToken(token);
 }
 
-async function verifySessionToken(token: string | undefined): Promise<string | null> {
+async function verifySessionToken(
+  token: string | undefined,
+): Promise<string | null> {
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, getSecret(), { algorithms: ["HS256"] });
+    const { payload } = await jwtVerify(token, getSecret(), {
+      algorithms: ["HS256"],
+    });
     return payload.sub ?? null;
   } catch {
     return null;

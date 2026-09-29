@@ -1,30 +1,48 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listGames, createGame, toggleFavorite, deleteGame } from "@/lib/games.functions";
 import { searchSteamGames, getSteamGameDetails, type SteamSearchResult } from "@/lib/steam.functions";
+import { CatalogSearch } from "@/components/catalog-search";
+import { GAME_STATUSES, STATUS_LABELS, STATUS_STYLES, PLATFORM_SUGGESTIONS, splitGenres } from "@/lib/game-meta";
+import type { GameStatus } from "@/integrations/supabase/types";
 import { withOverall } from "@/lib/scoring";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Heart, Plus, Search, Trash2, Star, Music2, SlidersHorizontal, LayoutGrid, Loader2 } from "@/lib/icons";
+import { Heart, Plus, Search, Trash2, Star, Music2, SlidersHorizontal, LayoutGrid, Layers } from "@/lib/icons";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
 import { MusicPicker } from "@/components/music-picker";
+import { GenrePlatformFields, StatusPicker } from "@/components/game-fields";
 import { rememberSequence } from "@/components/item-navigator";
 import { parseDecimal } from "@/lib/timecode";
 
 export const Route = createFileRoute("/_authenticated/games/")({
-  validateSearch: (s: Record<string, unknown>) => ({
+  validateSearch: (
+    s: Record<string, unknown>,
+  ): {
+    category: string;
+    search: string;
+    sort: string;
+    favOnly: boolean;
+    status?: string;
+    genre?: string;
+    platform?: string;
+  } => ({
     category: typeof s.category === "string" ? s.category : "all",
     search: typeof s.search === "string" ? s.search : "",
     sort: typeof s.sort === "string" ? s.sort : "score_desc",
     favOnly: s.favOnly === true || s.favOnly === "true",
+    // Optional so existing links to /games don't have to pass them
+    status: typeof s.status === "string" ? s.status : undefined,
+    genre: typeof s.genre === "string" ? s.genre : undefined,
+    platform: typeof s.platform === "string" ? s.platform : undefined,
   }),
   head: () => ({ meta: [{ title: "Games" }] }),
   component: GamesPage,
@@ -35,7 +53,7 @@ function GamesPage() {
   const qc = useQueryClient();
   const query = useQuery({ queryKey: ["games"], queryFn: () => list() });
 
-  const { category, search, sort, favOnly } = Route.useSearch();
+  const { category, search, sort, favOnly, status = "all", genre = "all", platform = "all" } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const categoryFilter = category ?? "all";
   const setCategoryFilter = (v: string) =>
@@ -46,6 +64,18 @@ function GamesPage() {
     navigate({ search: (prev) => ({ ...prev, sort: v }), replace: true });
   const setFavOnly = (fn: (prev: boolean) => boolean) =>
     navigate({ search: (prev) => ({ ...prev, favOnly: fn(prev.favOnly ?? false) }), replace: true });
+  const setFilter = (key: "status" | "genre" | "platform", v: string) =>
+    navigate({ search: (prev) => ({ ...prev, [key]: v }), replace: true });
+
+  // Filter options come from what's actually in the library
+  const genres = useMemo(
+    () => [...new Set(query.data?.games.flatMap((g) => splitGenres(g.genre)) ?? [])].sort(),
+    [query.data],
+  );
+  const platforms = useMemo(
+    () => [...new Set(query.data?.games.map((g) => g.platform).filter((p): p is string => !!p) ?? [])].sort(),
+    [query.data],
+  );
 
   useEffect(() => {
     if (!query.data) return;
@@ -71,6 +101,10 @@ function GamesPage() {
       games = games.filter((g) => query.data?.ratings.some(r => r.game_id === g.id && r.category_id === categoryFilter));
     }
     if (favOnly) games = games.filter((g) => g.isFavorite);
+    if (status === "none") games = games.filter((g) => !g.status);
+    else if (status !== "all") games = games.filter((g) => g.status === status);
+    if (genre !== "all") games = games.filter((g) => splitGenres(g.genre).includes(genre));
+    if (platform !== "all") games = games.filter((g) => g.platform === platform);
     games.sort((a, b) => {
       if (sort === "score_desc") {
         if (categoryFilter !== "all") {
@@ -93,7 +127,7 @@ function GamesPage() {
       return 0;
     });
     return games;
-  }, [query.data, search, sort, categoryFilter, favOnly]);
+  }, [query.data, search, sort, categoryFilter, favOnly, status, genre, platform]);
 
   // Detail pages navigate prev/next in the order currently shown here
   useEffect(() => {
@@ -134,7 +168,15 @@ function GamesPage() {
             </span>
           </div>
         </div>
-        <AddGameDialog onCreated={() => qc.invalidateQueries({ queryKey: ["games"] })} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild size="sm" variant="outline" className="gap-2">
+            <Link to="/games/tiers">
+              <Layers className="h-4 w-4" />
+              Tier list
+            </Link>
+          </Button>
+          <AddGameDialog onCreated={() => qc.invalidateQueries({ queryKey: ["games"] })} />
+        </div>
       </div>
 
       {/* ── Filter toolbar ── */}
@@ -173,6 +215,50 @@ function GamesPage() {
             </SelectContent>
           </Select>
 
+          {/* Status filter */}
+          <Select value={status} onValueChange={(v) => setFilter("status", v)}>
+            <SelectTrigger className="h-9 w-auto min-w-[130px] text-sm bg-muted/30 border-border/50">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              {GAME_STATUSES.map((s) => (
+                <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>
+              ))}
+              <SelectItem value="none">No status</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Genre filter */}
+          {genres.length > 0 && (
+            <Select value={genre} onValueChange={(v) => setFilter("genre", v)}>
+              <SelectTrigger className="h-9 w-auto min-w-[120px] text-sm bg-muted/30 border-border/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All genres</SelectItem>
+                {genres.map((g) => (
+                  <SelectItem key={g} value={g}>{g}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Platform filter */}
+          {platforms.length > 0 && (
+            <Select value={platform} onValueChange={(v) => setFilter("platform", v)}>
+              <SelectTrigger className="h-9 w-auto min-w-[130px] text-sm bg-muted/30 border-border/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All platforms</SelectItem>
+                {platforms.map((p) => (
+                  <SelectItem key={p} value={p}>{p}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
           {/* Sort */}
           <Select value={sort} onValueChange={setSort}>
             <SelectTrigger className="h-9 w-auto min-w-[180px] text-sm bg-muted/30 border-border/50">
@@ -207,7 +293,7 @@ function GamesPage() {
       </div>
 
       {/* ── Active filter context label ── */}
-      {(search || categoryFilter !== "all" || favOnly) && (
+      {(search || categoryFilter !== "all" || favOnly || status !== "all" || genre !== "all" || platform !== "all") && (
         <motion.p
           initial={{ opacity: 0, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
@@ -219,13 +305,18 @@ function GamesPage() {
           {categoryFilter !== "all" && (
             <> in <span className="text-foreground font-medium">{query.data?.categories.find(c => c.id === categoryFilter)?.name}</span></>
           )}
+          {status !== "all" && <> · {status === "none" ? "no status" : STATUS_LABELS[status as GameStatus]}</>}
+          {genre !== "all" && <> · {genre}</>}
+          {platform !== "all" && <> · {platform}</>}
           {favOnly && <> · favorites only</>}
         </motion.p>
       )}
 
       {/* ── Grid / Empty ── */}
       {enriched.length === 0 ? (
-        <EmptyState hasFilters={!!(search || categoryFilter !== "all" || favOnly)} />
+        <EmptyState
+          hasFilters={!!(search || categoryFilter !== "all" || favOnly || status !== "all" || genre !== "all" || platform !== "all")}
+        />
       ) : (
         <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
           <AnimatePresence mode="popLayout">
@@ -324,6 +415,7 @@ function GameCard({
     overall: number | null;
     isFavorite: boolean;
     hours_played?: number | null;
+    status?: GameStatus | null;
   };
   categoryFilter?: string;
   ratings?: { game_id: string; category_id: string; score: number }[];
@@ -390,6 +482,15 @@ function GameCard({
 
         {/* Hover overlay ring */}
         <div className="absolute inset-0 rounded-xl ring-1 ring-inset ring-white/0 group-hover:ring-white/10 transition-all duration-300" />
+
+        {/* Play status */}
+        {game.status && (
+          <span
+            className={`absolute left-2 top-2 rounded-md px-1.5 py-0.5 text-[10px] font-semibold shadow ${STATUS_STYLES[game.status]}`}
+          >
+            {STATUS_LABELS[game.status]}
+          </span>
+        )}
 
         {/* Favorite button */}
         <button
@@ -492,11 +593,23 @@ function GameCard({
 /* ─── Add game dialog ─────────────────────────────────────────────── */
 
 function AddGameDialog({ onCreated }: { onCreated: () => void }) {
+  const emptyForm = {
+    title: "",
+    cover_url: "",
+    release_date: "",
+    music_url: "",
+    music_start: null as number | null,
+    hours_played: "",
+    genre: "",
+    platform: "",
+    status: null as GameStatus | null,
+    steam_appid: null as number | null,
+  };
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    title: "", cover_url: "", release_date: "", music_url: "", music_start: null as number | null, hours_played: "",
-  });
+  const [form, setForm] = useState(emptyForm);
   const create = useServerFn(createGame);
+  const steamSearch = useServerFn(searchSteamGames);
+  const steamDetails = useServerFn(getSteamGameDetails);
   const mut = useMutation({
     mutationFn: () =>
       create({
@@ -507,11 +620,13 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
           music_url: form.music_url || null,
           music_start: form.music_url ? form.music_start : null,
           hours_played: parseDecimal(form.hours_played),
+          genre: form.genre || null,
+          platform: form.platform || null,
         },
       }),
     onSuccess: () => {
       toast.success("Game added");
-      setForm({ title: "", cover_url: "", release_date: "", music_url: "", music_start: null, hours_played: "" });
+      setForm(emptyForm);
       setOpen(false);
       onCreated();
     },
@@ -526,7 +641,7 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
           Add game
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add a game</DialogTitle>
         </DialogHeader>
@@ -534,15 +649,30 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
           onSubmit={(e) => { e.preventDefault(); mut.mutate(); }}
           className="space-y-4 pt-1"
         >
-          <SteamSearch
-            onPick={(d) =>
+          <CatalogSearch<SteamSearchResult>
+            label="Search on Steam"
+            placeholder="Type a game name to autofill…"
+            queryKey="steam-search"
+            search={(term) => steamSearch({ data: { term } })}
+            getKey={(r) => r.appId}
+            renderItem={(r) => (
+              <>
+                <img src={r.thumb} alt="" className="h-8 w-[85px] shrink-0 rounded object-cover" loading="lazy" />
+                <span className="line-clamp-1">{r.name}</span>
+              </>
+            )}
+            onPick={async (r) => {
+              const d = await steamDetails({ data: { appId: r.appId } });
               setForm((f) => ({
                 ...f,
                 title: d.title,
                 cover_url: d.cover_url ?? "",
                 release_date: d.release_date ?? "",
-              }))
-            }
+                genre: d.genre ?? "",
+                platform: f.platform || "PC",
+                steam_appid: d.steam_appid,
+              }));
+            }}
           />
 
           <div className="space-y-1.5">
@@ -593,6 +723,17 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
             </div>
           </div>
 
+          <GenrePlatformFields
+            genre={form.genre}
+            platform={form.platform}
+            onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+          />
+
+          <div className="space-y-1.5">
+            <Label className="text-sm">Status</Label>
+            <StatusPicker value={form.status} onChange={(status) => setForm((f) => ({ ...f, status }))} />
+          </div>
+
           <div className="space-y-1.5">
             <Label className="flex items-center gap-1.5 text-sm">
               <Music2 className="h-3.5 w-3.5" /> Music
@@ -614,90 +755,5 @@ function AddGameDialog({ onCreated }: { onCreated: () => void }) {
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-/* ─── Steam search (prefills the add form) ────────────────────────── */
-
-function SteamSearch({ onPick }: { onPick: (d: { title: string; cover_url: string | null; release_date: string | null }) => void }) {
-  const search = useServerFn(searchSteamGames);
-  const details = useServerFn(getSteamGameDetails);
-  const [term, setTerm] = useState("");
-  const [debounced, setDebounced] = useState("");
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(term.trim()), 300);
-    return () => clearTimeout(t);
-  }, [term]);
-
-  const results = useQuery({
-    queryKey: ["steam-search", debounced],
-    queryFn: () => search({ data: { term: debounced } }),
-    enabled: debounced.length >= 2,
-    staleTime: 5 * 60_000,
-  });
-
-  const pick = useMutation({
-    mutationFn: (r: SteamSearchResult) => details({ data: { appId: r.appId } }),
-    onSuccess: (d) => {
-      onPick(d);
-      setTerm("");
-      setOpen(false);
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Steam lookup failed"),
-  });
-
-  const items = results.data ?? [];
-  const showList = open && debounced.length >= 2;
-
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-sm">Search on Steam</Label>
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={term}
-          onChange={(e) => { setTerm(e.target.value); setOpen(true); }}
-          onKeyDown={(e) => {
-            // Enter picks the first hit instead of submitting the form
-            if (e.key === "Enter") {
-              e.preventDefault();
-              if (items[0]) pick.mutate(items[0]);
-            }
-          }}
-          placeholder="Type a game name to autofill…"
-          className="pl-9 pr-9"
-          autoFocus
-        />
-        {(results.isFetching || pick.isPending) && (
-          <Loader2 className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
-        )}
-      </div>
-
-      {showList && (
-        <div className="max-h-64 overflow-y-auto rounded-md border border-border/50 bg-muted/20">
-          {results.isError ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">Steam is unreachable — fill the fields manually.</p>
-          ) : items.length === 0 ? (
-            !results.isFetching && (
-              <p className="px-3 py-2 text-xs text-muted-foreground">No Steam results — fill the fields manually.</p>
-            )
-          ) : (
-            items.map((r) => (
-              <button
-                key={r.appId}
-                type="button"
-                disabled={pick.isPending}
-                onClick={() => pick.mutate(r)}
-                className="flex w-full items-center gap-3 px-2 py-1.5 text-left text-sm hover:bg-muted/60 disabled:opacity-50"
-              >
-                <img src={r.thumb} alt="" className="h-8 w-[85px] shrink-0 rounded object-cover" loading="lazy" />
-                <span className="line-clamp-1">{r.name}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
   );
 }

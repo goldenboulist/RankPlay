@@ -16,12 +16,14 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedDiscoverRouteImport } from './routes/_authenticated/discover'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users.index'
 import { Route as AuthenticatedMediaIndexRouteImport } from './routes/_authenticated/media.index'
 import { Route as AuthenticatedGamesIndexRouteImport } from './routes/_authenticated/games.index'
 import { Route as AuthenticatedUsersUserIdRouteImport } from './routes/_authenticated/users.$userId'
 import { Route as AuthenticatedMediaMediaIdRouteImport } from './routes/_authenticated/media.$mediaId'
+import { Route as AuthenticatedGamesTiersRouteImport } from './routes/_authenticated/games.tiers'
 import { Route as AuthenticatedGamesGameIdRouteImport } from './routes/_authenticated/games.$gameId'
 import { Route as AuthenticatedUsersUserIdKindItemIdRouteImport } from './routes/_authenticated/users.$userId_.$kind.$itemId'
 
@@ -60,6 +62,11 @@ const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedDiscoverRoute = AuthenticatedDiscoverRouteImport.update({
+  id: '/discover',
+  path: '/discover',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -92,6 +99,11 @@ const AuthenticatedMediaMediaIdRoute =
     path: '/media/$mediaId',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedGamesTiersRoute = AuthenticatedGamesTiersRouteImport.update({
+  id: '/games/tiers',
+  path: '/games/tiers',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedGamesGameIdRoute =
   AuthenticatedGamesGameIdRouteImport.update({
     id: '/games/$gameId',
@@ -112,8 +124,10 @@ export interface FileRoutesByFullPath {
   '/politique-confidentialite': typeof PolitiqueConfidentialiteRoute
   '/reset-password': typeof ResetPasswordRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/discover': typeof AuthenticatedDiscoverRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/games/$gameId': typeof AuthenticatedGamesGameIdRoute
+  '/games/tiers': typeof AuthenticatedGamesTiersRoute
   '/media/$mediaId': typeof AuthenticatedMediaMediaIdRoute
   '/users/$userId': typeof AuthenticatedUsersUserIdRoute
   '/games/': typeof AuthenticatedGamesIndexRoute
@@ -128,8 +142,10 @@ export interface FileRoutesByTo {
   '/politique-confidentialite': typeof PolitiqueConfidentialiteRoute
   '/reset-password': typeof ResetPasswordRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/discover': typeof AuthenticatedDiscoverRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/games/$gameId': typeof AuthenticatedGamesGameIdRoute
+  '/games/tiers': typeof AuthenticatedGamesTiersRoute
   '/media/$mediaId': typeof AuthenticatedMediaMediaIdRoute
   '/users/$userId': typeof AuthenticatedUsersUserIdRoute
   '/games': typeof AuthenticatedGamesIndexRoute
@@ -146,8 +162,10 @@ export interface FileRoutesById {
   '/politique-confidentialite': typeof PolitiqueConfidentialiteRoute
   '/reset-password': typeof ResetPasswordRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/discover': typeof AuthenticatedDiscoverRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/games/$gameId': typeof AuthenticatedGamesGameIdRoute
+  '/_authenticated/games/tiers': typeof AuthenticatedGamesTiersRoute
   '/_authenticated/media/$mediaId': typeof AuthenticatedMediaMediaIdRoute
   '/_authenticated/users/$userId': typeof AuthenticatedUsersUserIdRoute
   '/_authenticated/games/': typeof AuthenticatedGamesIndexRoute
@@ -164,8 +182,10 @@ export interface FileRouteTypes {
     | '/politique-confidentialite'
     | '/reset-password'
     | '/dashboard'
+    | '/discover'
     | '/settings'
     | '/games/$gameId'
+    | '/games/tiers'
     | '/media/$mediaId'
     | '/users/$userId'
     | '/games/'
@@ -180,8 +200,10 @@ export interface FileRouteTypes {
     | '/politique-confidentialite'
     | '/reset-password'
     | '/dashboard'
+    | '/discover'
     | '/settings'
     | '/games/$gameId'
+    | '/games/tiers'
     | '/media/$mediaId'
     | '/users/$userId'
     | '/games'
@@ -197,8 +219,10 @@ export interface FileRouteTypes {
     | '/politique-confidentialite'
     | '/reset-password'
     | '/_authenticated/dashboard'
+    | '/_authenticated/discover'
     | '/_authenticated/settings'
     | '/_authenticated/games/$gameId'
+    | '/_authenticated/games/tiers'
     | '/_authenticated/media/$mediaId'
     | '/_authenticated/users/$userId'
     | '/_authenticated/games/'
@@ -267,6 +291,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSettingsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/discover': {
+      id: '/_authenticated/discover'
+      path: '/discover'
+      fullPath: '/discover'
+      preLoaderRoute: typeof AuthenticatedDiscoverRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
@@ -309,6 +340,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedMediaMediaIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/games/tiers': {
+      id: '/_authenticated/games/tiers'
+      path: '/games/tiers'
+      fullPath: '/games/tiers'
+      preLoaderRoute: typeof AuthenticatedGamesTiersRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/games/$gameId': {
       id: '/_authenticated/games/$gameId'
       path: '/games/$gameId'
@@ -328,8 +366,10 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedDiscoverRoute: typeof AuthenticatedDiscoverRoute
   AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
   AuthenticatedGamesGameIdRoute: typeof AuthenticatedGamesGameIdRoute
+  AuthenticatedGamesTiersRoute: typeof AuthenticatedGamesTiersRoute
   AuthenticatedMediaMediaIdRoute: typeof AuthenticatedMediaMediaIdRoute
   AuthenticatedUsersUserIdRoute: typeof AuthenticatedUsersUserIdRoute
   AuthenticatedGamesIndexRoute: typeof AuthenticatedGamesIndexRoute
@@ -340,8 +380,10 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedDiscoverRoute: AuthenticatedDiscoverRoute,
   AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
   AuthenticatedGamesGameIdRoute: AuthenticatedGamesGameIdRoute,
+  AuthenticatedGamesTiersRoute: AuthenticatedGamesTiersRoute,
   AuthenticatedMediaMediaIdRoute: AuthenticatedMediaMediaIdRoute,
   AuthenticatedUsersUserIdRoute: AuthenticatedUsersUserIdRoute,
   AuthenticatedGamesIndexRoute: AuthenticatedGamesIndexRoute,

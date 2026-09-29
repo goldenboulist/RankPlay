@@ -23,12 +23,18 @@ CREATE OR REPLACE TABLE games (
   hours_played DOUBLE DEFAULT 0,
   genre        VARCHAR(80),
   platform     VARCHAR(80),
+  status       ENUM('backlog','playing','completed','dropped'),
+  steam_appid  INT UNSIGNED,
+  steam_tags   VARCHAR(500),
+  tier         CHAR(1),
+  tier_pos     INT,
   music_url    VARCHAR(2000),
   music_start  DOUBLE,
   notes        TEXT,
   created_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  KEY idx_games_user_steam (user_id, steam_appid),
   CONSTRAINT fk_games_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );
 

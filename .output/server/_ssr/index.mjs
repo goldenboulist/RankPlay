@@ -172,7 +172,9 @@ function readSessionFromRequest(request) {
 async function verifySessionToken(token) {
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, getSecret(), { algorithms: ["HS256"] });
+    const { payload } = await jwtVerify(token, getSecret(), {
+      algorithms: ["HS256"]
+    });
     return payload.sub ?? null;
   } catch {
     return null;
@@ -222,7 +224,7 @@ async function handleUpload(request) {
 let serverEntryPromise;
 async function getServerEntry() {
   if (!serverEntryPromise) {
-    serverEntryPromise = import("./server-CKhcZQ3s.mjs").then((n) => n.s).then(
+    serverEntryPromise = import("./server-B4ncXPsG.mjs").then((n) => n.s).then(
       (m) => m.default ?? m
     );
   }

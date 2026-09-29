@@ -96,7 +96,7 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     // Handle file uploads before TanStack Start routing (createAPIFileRoute
-    // is not discovered by @lovable.dev/vite-tanstack-config in dev mode).
+    // is not discovered in dev mode).
     const url = new URL(request.url);
     if (url.pathname === "/api/upload" && request.method === "POST") {
       return handleUpload(request);

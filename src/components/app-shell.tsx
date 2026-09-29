@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { LayoutDashboard, LogOut, Settings, Library, Film, Planet, Users } from "@/lib/icons";
+import { LayoutDashboard, LogOut, Settings, Library, Film, Planet, Users, Compass } from "@/lib/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { AnimatedDots } from "@/components/AnimatedDots";
 
@@ -12,6 +12,7 @@ function Nav() {
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/games", label: "Games", icon: Library },
     { to: "/media", label: "Media", icon: Film },
+    { to: "/discover", label: "Discover", icon: Compass },
     { to: "/users", label: "Users", icon: Users },
     { to: "/settings", label: "Settings", icon: Settings },
   ];

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getDb } from "@/lib/db.server";
+import { randomUUID } from "crypto";
 import type { DbMedia, DbMediaRating, DbMediaFavorite, DbMediaCategory } from "@/integrations/supabase/types";
 
 // Re-export listUploads so media pages can import it from one place
@@ -91,11 +92,13 @@ export const createMedia = createServerFn({ method: "POST" })
   .validator((d: unknown) => mediaInput.parse(d))
   .handler(async ({ data, context }) => {
     const db = getDb();
+    const id = randomUUID();
 
     await db.execute(
-      `INSERT INTO media (user_id, title, media_type, cover_url, release_date, music_url, music_start, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO media (id, user_id, title, media_type, cover_url, release_date, music_url, music_start, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        id,
         context.userId,
         data.title,
         data.media_type,
@@ -107,10 +110,8 @@ export const createMedia = createServerFn({ method: "POST" })
       ]
     );
 
-    const [rows] = await db.execute<DbMedia[]>(
-      "SELECT * FROM media WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-      [context.userId]
-    );
+    // Read back by id: "latest created_at" is ambiguous within the same second
+    const [rows] = await db.execute<DbMedia[]>("SELECT * FROM media WHERE id = ?", [id]);
     return (rows as DbMedia[])[0];
   });
 
@@ -246,16 +247,14 @@ export const createMediaCategory = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const db = getDb();
+    const id = randomUUID();
 
     await db.execute(
-      "INSERT INTO categories_media (user_id, name, icon, sort_order, coefficient) VALUES (?, ?, ?, 99, ?)",
-      [context.userId, data.name, data.icon ?? null, data.coefficient ?? 1]
+      "INSERT INTO categories_media (id, user_id, name, icon, sort_order, coefficient) VALUES (?, ?, ?, ?, 99, ?)",
+      [id, context.userId, data.name, data.icon ?? null, data.coefficient ?? 1]
     );
 
-    const [rows] = await db.execute<DbMediaCategory[]>(
-      "SELECT * FROM categories_media WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-      [context.userId]
-    );
+    const [rows] = await db.execute<DbMediaCategory[]>("SELECT * FROM categories_media WHERE id = ?", [id]);
     return (rows as DbMediaCategory[])[0];
   });
 

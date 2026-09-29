@@ -13,6 +13,7 @@ import {
   updateCategoryCoefficient,
   updateGame,
   deleteGameMusic,
+  setGameStatus,
 } from "@/lib/games.functions";
 import { withOverall, computeOverall } from "@/lib/scoring";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,9 @@ import { MusicPicker } from "@/components/music-picker";
 import { MusicPlayer } from "@/components/music-player";
 import { ItemNavigator, useItemSequence } from "@/components/item-navigator";
 import { parseDecimal } from "@/lib/timecode";
+import { GenrePlatformFields, StatusPicker } from "@/components/game-fields";
+import { splitGenres } from "@/lib/game-meta";
+import type { GameStatus } from "@/integrations/supabase/types";
 
 export const Route = createFileRoute("/_authenticated/games/$gameId")({
   head: () => ({ meta: [{ title: "Game" }] }),
@@ -91,6 +95,15 @@ function GameDetail() {
   }, [sequence.prev, sequence.next, qc, get]);
 
   const removeMusic = useServerFn(deleteGameMusic);
+  const saveStatus = useServerFn(setGameStatus);
+  const statusMut = useMutation({
+    mutationFn: (status: GameStatus | null) => saveStatus({ data: { id: gameId, status } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["games", gameId] });
+      qc.invalidateQueries({ queryKey: ["games"], exact: true });
+    },
+    onError: () => toast.error("Failed to update status"),
+  });
 
   if (all.isLoading || detail.isLoading || !all.data || !detail.data) {
     return <DetailSkeleton />;
@@ -167,6 +180,12 @@ function GameDetail() {
                   <span>{Number(game.hours_played)}h played</span>
                 </>
               )}
+              {game.platform && (
+                <>
+                  <span className="h-3 w-px bg-border/60" />
+                  <span>{game.platform}</span>
+                </>
+              )}
               {overall !== null && (
                 <>
                   <span className="h-3 w-px bg-border/60" />
@@ -184,6 +203,22 @@ function GameDetail() {
                 </>
               )}
             </div>
+
+            {splitGenres(game.genre).length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {splitGenres(game.genre).map((g) => (
+                  <span key={g} className="rounded-full border border-border/50 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                    {g}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <StatusPicker
+              value={game.status}
+              onChange={(status) => statusMut.mutate(status)}
+              disabled={statusMut.isPending}
+            />
 
             {/* Rank context */}
             {(neighbors.above.length > 0 || neighbors.below.length > 0) && (
@@ -558,7 +593,17 @@ function EditMetaCard({
   game,
   onSaved,
 }: {
-  game: { id: string; title: string; cover_url: string | null; release_date: string | null; music_url: string | null; music_start: number | null; hours_played: number | null };
+  game: {
+    id: string;
+    title: string;
+    cover_url: string | null;
+    release_date: string | null;
+    music_url: string | null;
+    music_start: number | null;
+    hours_played: number | null;
+    genre: string | null;
+    platform: string | null;
+  };
   onSaved: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -569,6 +614,8 @@ function EditMetaCard({
     music_url: game.music_url ?? "",
     music_start: game.music_start,
     hours_played: game.hours_played != null ? String(game.hours_played) : "",
+    genre: game.genre ?? "",
+    platform: game.platform ?? "",
   });
 
   const update = useServerFn(updateGame);
@@ -583,6 +630,8 @@ function EditMetaCard({
           music_url: form.music_url || null,
           music_start: form.music_url ? form.music_start : null,
           hours_played: parseDecimal(form.hours_played),
+          genre: form.genre || null,
+          platform: form.platform || null,
         },
       }),
     onSuccess: () => { toast.success("Saved"); setEditing(false); onSaved(); },
@@ -640,6 +689,13 @@ function EditMetaCard({
           />
         </div>
       </div>
+
+      <GenrePlatformFields
+        compact
+        genre={form.genre}
+        platform={form.platform}
+        onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+      />
 
       <div className="space-y-1.5">
         <label className="text-xs text-muted-foreground flex items-center gap-1.5">

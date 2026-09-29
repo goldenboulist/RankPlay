@@ -2,8 +2,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getDb } from "@/lib/db.server";
-import type { DbGame, DbCategory, DbRating, DbFavorite, DbMusicEntry } from "@/integrations/supabase/types";
+import { GAME_STATUSES, TIERS, type DbGame, type DbCategory, type DbRating, type DbFavorite, type DbMusicEntry } from "@/integrations/supabase/types";
 import { promises as fs } from "fs";
+import { randomUUID } from "crypto";
 import path from "path";
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.ogg', '.wav', '.flac', '.aac', '.m4a', '.opus', '.weba']);
@@ -15,7 +16,11 @@ const gameInput = z.object({
   music_start: z.number().min(0).max(86400).optional().nullable(),
   notes: z.string().trim().max(5000).optional().nullable(),
   hours_played: z.number().min(0).max(99999).optional().nullable(),
+  genre: z.string().trim().max(80).optional().nullable(),
+  platform: z.string().trim().max(80).optional().nullable(),
 });
+
+const statusInput = z.enum(GAME_STATUSES).nullable();
 
 // Ratings/favorites reference rows by id; make sure they're the caller's own.
 // Without this, anyone could overwrite another user's score (ids are visible on profiles).
@@ -91,14 +96,24 @@ export const getGame = createServerFn({ method: "GET" })
 // ── Create game ───────────────────────────────────────────────────────────────
 export const createGame = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((d: unknown) => gameInput.parse(d))
+  .validator((d: unknown) =>
+    gameInput
+      .extend({
+        status: statusInput.optional(),
+        steam_appid: z.number().int().positive().optional().nullable(),
+      })
+      .parse(d)
+  )
   .handler(async ({ data, context }) => {
     const db = getDb();
+    const id = randomUUID();
 
     await db.execute(
-      `INSERT INTO games (user_id, title, cover_url, release_date, music_url, music_start, notes, hours_played)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO games (id, user_id, title, cover_url, release_date, music_url, music_start, notes, hours_played,
+                          genre, platform, status, steam_appid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        id,
         context.userId,
         data.title,
         data.cover_url ?? null,
@@ -107,14 +122,16 @@ export const createGame = createServerFn({ method: "POST" })
         data.music_url ? data.music_start ?? null : null,
         data.notes ?? null,
         data.hours_played ?? null,
+        data.genre || null,
+        data.platform || null,
+        data.status ?? null,
+        data.steam_appid ?? null,
       ]
     );
 
-    // MySQL doesn't return the inserted row directly; fetch by unique fields
-    const [rows] = await db.execute<DbGame[]>(
-      "SELECT * FROM games WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-      [context.userId]
-    );
+    // MySQL doesn't return the inserted row; read it back by the id generated above
+    // (not "latest created_at", which only has 1-second precision)
+    const [rows] = await db.execute<DbGame[]>("SELECT * FROM games WHERE id = ?", [id]);
     return (rows as DbGame[])[0];
   });
 
@@ -131,7 +148,8 @@ export const updateGame = createServerFn({ method: "POST" })
     await db.execute(
       `UPDATE games
          SET title = ?, cover_url = ?, release_date = ?,
-             music_url = ?, music_start = ?, notes = ?, hours_played = ?
+             music_url = ?, music_start = ?, notes = ?, hours_played = ?,
+             genre = ?, platform = ?
        WHERE id = ? AND user_id = ?`,
       [
         rest.title,
@@ -141,6 +159,8 @@ export const updateGame = createServerFn({ method: "POST" })
         rest.music_url ? rest.music_start ?? null : null,
         rest.notes ?? null,
         rest.hours_played ?? null,
+        rest.genre || null,
+        rest.platform || null,
         id,
         context.userId,
       ]
@@ -151,6 +171,60 @@ export const updateGame = createServerFn({ method: "POST" })
       [id, context.userId]
     );
     return (rows as DbGame[])[0];
+  });
+
+// ── Set play status ───────────────────────────────────────────────────────────
+export const setGameStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) =>
+    z.object({ id: z.string().uuid(), status: statusInput }).parse(d)
+  )
+  .handler(async ({ data, context }) => {
+    const db = getDb();
+    await db.execute(
+      "UPDATE games SET status = ? WHERE id = ? AND user_id = ?",
+      [data.status, data.id, context.userId]
+    );
+    return { ok: true };
+  });
+
+// ── Save tier list ────────────────────────────────────────────────────────────
+// Receives the full board; games absent from `placements` keep their tier.
+export const saveTierList = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) =>
+    z
+      .object({
+        placements: z
+          .array(
+            z.object({
+              id: z.string().uuid(),
+              tier: z.enum(TIERS).nullable(),
+              pos: z.number().int().min(0).max(100000),
+            })
+          )
+          .max(5000),
+      })
+      .parse(d)
+  )
+  .handler(async ({ data, context }) => {
+    const conn = await getDb().getConnection();
+    try {
+      await conn.beginTransaction();
+      for (const p of data.placements) {
+        await conn.execute(
+          "UPDATE games SET tier = ?, tier_pos = ? WHERE id = ? AND user_id = ?",
+          [p.tier, p.tier ? p.pos : null, p.id, context.userId]
+        );
+      }
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+    return { ok: true };
   });
 
 // ── Delete game ───────────────────────────────────────────────────────────────
@@ -252,16 +326,14 @@ export const createCategory = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const db = getDb();
+    const id = randomUUID();
 
     await db.execute(
-      "INSERT INTO categories (user_id, name, icon, sort_order, coefficient) VALUES (?, ?, ?, 99, ?)",
-      [context.userId, data.name, data.icon ?? null, data.coefficient ?? 1]
+      "INSERT INTO categories (id, user_id, name, icon, sort_order, coefficient) VALUES (?, ?, ?, ?, 99, ?)",
+      [id, context.userId, data.name, data.icon ?? null, data.coefficient ?? 1]
     );
 
-    const [rows] = await db.execute<DbCategory[]>(
-      "SELECT * FROM categories WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-      [context.userId]
-    );
+    const [rows] = await db.execute<DbCategory[]>("SELECT * FROM categories WHERE id = ?", [id]);
     return (rows as DbCategory[])[0];
   });
 

@@ -23,7 +23,8 @@ export function hit(key: string, windowMs: number): void {
   const now = Date.now();
   sweep(now);
   const b = buckets.get(key);
-  if (!b || b.resetAt <= now) buckets.set(key, { count: 1, resetAt: now + windowMs });
+  if (!b || b.resetAt <= now)
+    buckets.set(key, { count: 1, resetAt: now + windowMs });
   else b.count++;
 }
 

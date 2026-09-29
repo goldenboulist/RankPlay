@@ -20,6 +20,8 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CATEGORY_ICONS, CategoryIconName } from "@/lib/category-icons";
 import { rememberSequence } from "@/components/item-navigator";
+import { CatalogSearch } from "@/components/catalog-search";
+import { searchMediaCatalog, type CatalogMedia } from "@/lib/media-catalog.functions";
 
 export const Route = createFileRoute("/_authenticated/media/")({
   validateSearch: (s: Record<string, unknown>) => ({
@@ -543,6 +545,7 @@ function AddMediaDialog({ onCreated }: { onCreated: () => void }) {
     title: "", media_type: "movie" as "movie" | "series", cover_url: "", release_date: "",
   });
   const create = useServerFn(createMedia);
+  const catalog = useServerFn(searchMediaCatalog);
   const mut = useMutation({
     mutationFn: () =>
       create({
@@ -577,6 +580,40 @@ function AddMediaDialog({ onCreated }: { onCreated: () => void }) {
           onSubmit={(e) => { e.preventDefault(); mut.mutate(); }}
           className="space-y-4 pt-1"
         >
+          <CatalogSearch<CatalogMedia>
+            label="Search movies & series"
+            placeholder="Type a title to autofill…"
+            queryKey="media-catalog-search"
+            search={(term) => catalog({ data: { term } })}
+            getKey={(r) => r.id}
+            renderItem={(r) => (
+              <>
+                {r.thumb ? (
+                  <img src={r.thumb} alt="" className="h-12 w-8 shrink-0 rounded object-cover" loading="lazy" />
+                ) : (
+                  <div className="grid h-12 w-8 shrink-0 place-items-center rounded bg-muted">
+                    {r.media_type === "series" ? <Tv className="h-3.5 w-3.5" /> : <Film className="h-3.5 w-3.5" />}
+                  </div>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="line-clamp-1">{r.title}</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {r.media_type === "series" ? "Series" : "Movie"}
+                    {r.release_date && ` · ${r.release_date.slice(0, 4)}`}
+                  </span>
+                </span>
+              </>
+            )}
+            onPick={(r) =>
+              setForm({
+                title: r.title,
+                media_type: r.media_type,
+                cover_url: r.cover_url ?? "",
+                release_date: r.release_date ?? "",
+              })
+            }
+          />
+
           <div className="space-y-1.5">
             <Label className="text-sm">Type</Label>
             <div className="flex gap-2">
@@ -604,17 +641,21 @@ function AddMediaDialog({ onCreated }: { onCreated: () => void }) {
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               placeholder="e.g. Inception"
-              autoFocus
             />
           </div>
 
           <div className="space-y-1.5">
             <Label className="text-sm">Cover image URL</Label>
-            <Input
-              value={form.cover_url}
-              onChange={(e) => setForm({ ...form, cover_url: e.target.value })}
-              placeholder="https://…"
-            />
+            <div className="flex items-center gap-3">
+              {form.cover_url && (
+                <img src={form.cover_url} alt="" className="h-14 w-[42px] shrink-0 rounded object-cover bg-muted" />
+              )}
+              <Input
+                value={form.cover_url}
+                onChange={(e) => setForm({ ...form, cover_url: e.target.value })}
+                placeholder="https://…"
+              />
+            </div>
           </div>
 
           <div className="space-y-1.5">

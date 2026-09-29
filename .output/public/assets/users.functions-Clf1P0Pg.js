@@ -1,1 +1,0 @@
-import{X as e,Y as d}from"./index-Dj8MLrWo.js";import{r}from"./auth-middleware-CTEOSuV0.js";const c=e({method:"GET"}).middleware([r]).handler(d("d96fc76850779782acfe0d57c8df91435fcd2dbdbbe157b34f6d9842c0ffc4b6")),s=e({method:"GET"}).middleware([r]).handler(d("dbb4d40b1d0bb236fed25653c75834177d398c1580486dd4a4259815e08b6109"));export{s as g,c as l};

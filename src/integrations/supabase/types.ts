@@ -25,9 +25,22 @@ export interface DbGame extends RowDataPacket {
   music_start: number | null;
   notes: string | null;
   hours_played: number | null;
+  genre: string | null;
+  platform: string | null;
+  status: GameStatus | null;
+  steam_appid: number | null;
+  steam_tags: string | null;
+  tier: string | null;
+  tier_pos: number | null;
   created_at: string;
   updated_at: string;
 }
+
+export const GAME_STATUSES = ["backlog", "playing", "completed", "dropped"] as const;
+export type GameStatus = (typeof GAME_STATUSES)[number];
+
+export const TIERS = ["S", "A", "B", "C", "D"] as const;
+export type Tier = (typeof TIERS)[number];
 
 export interface DbCategory extends RowDataPacket {
   id: string;

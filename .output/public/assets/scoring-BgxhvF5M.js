@@ -1,0 +1,1 @@
+function d(r,n,i=[],o="game_id"){const t=n.filter(e=>e[o]===r);if(t.length===0)return null;let c=0,l=0;for(const e of t){const u=i.find(f=>f.id===e.category_id),a=Number(u?.coefficient??1);c+=Number(e.score)*a,l+=a}return l===0?null:Math.round(c/l*10)/10}function m(r,n,i=[],o="game_id"){return r.map(t=>({...t,overall:d(t.id,n,i,o)}))}export{d as c,m as w};
