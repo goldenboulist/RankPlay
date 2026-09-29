@@ -210,10 +210,17 @@ async function handleUpload(request) {
     }
     const buffer = Buffer.from(await file.arrayBuffer());
     const base = path.basename(file.name, path.extname(file.name)).replace(/[^a-zA-Z0-9-]/g, "_").slice(0, 150);
-    const filename = `${Date.now()}-${base}${ext}`;
-    const filepath = path.join(UPLOADS_DIR, filename);
-    await promises.mkdir(path.dirname(filepath), { recursive: true });
-    await promises.writeFile(filepath, buffer);
+    await promises.mkdir(UPLOADS_DIR, { recursive: true });
+    let filename = "";
+    for (let attempt = 0; ; attempt++) {
+      filename = `${Date.now()}${attempt ? `-${attempt}` : ""}-${base}${ext}`;
+      try {
+        await promises.writeFile(path.join(UPLOADS_DIR, filename), buffer, { flag: "wx" });
+        break;
+      } catch (e) {
+        if (e.code !== "EEXIST" || attempt >= 5) throw e;
+      }
+    }
     return new Response(JSON.stringify({ url: `/uploads/${filename}` }), {
       headers: { "content-type": "application/json" }
     });
@@ -291,7 +298,7 @@ async function serveUpload(request, pathname) {
 let serverEntryPromise;
 async function getServerEntry() {
   if (!serverEntryPromise) {
-    serverEntryPromise = import("./server-BzaL-fNz.mjs").then((n) => n.s).then(
+    serverEntryPromise = import("./server-BhBj06PP.mjs").then((n) => n.s).then(
       (m) => m.default ?? m
     );
   }

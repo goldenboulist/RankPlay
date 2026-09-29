@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useCallback } from "react";
@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Plus, Trash2, X, Check, Music2, ChevronUp } from "@/lib/icons";
+import { ArrowLeft, Plus, Trash2, X, Check, Music2, ChevronUp, Compass } from "@/lib/icons";
 import { toast } from "sonner";
 import { describeError } from "@/lib/error-message";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -166,7 +166,7 @@ function GameDetail() {
               <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/60 mb-1.5">
                 Game
               </p>
-              <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-none line-clamp-2">
+              <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-tight line-clamp-2">
                 {game.title}
               </h1>
             </div>
@@ -215,11 +215,19 @@ function GameDetail() {
               </div>
             )}
 
-            <StatusPicker
-              value={game.status}
-              onChange={(status) => statusMut.mutate(status)}
-              disabled={statusMut.isPending}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusPicker
+                value={game.status}
+                onChange={(status) => statusMut.mutate(status)}
+                disabled={statusMut.isPending}
+              />
+              <Button asChild size="sm" variant="outline" className="h-7 gap-1.5 text-xs">
+                <Link to="/discover" search={{ seeds: [game.id] }}>
+                  <Compass className="h-3.5 w-3.5" />
+                  Find similar games
+                </Link>
+              </Button>
+            </div>
 
             {/* Rank context */}
             {(neighbors.above.length > 0 || neighbors.below.length > 0) && (

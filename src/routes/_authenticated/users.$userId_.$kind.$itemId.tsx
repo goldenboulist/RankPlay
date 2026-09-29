@@ -171,7 +171,7 @@ function MemberItemDetail() {
                 {kindLabel}
                 {isFavorite && <Heart className="ml-1 h-3 w-3 fill-red-400 text-red-400" />}
               </p>
-              <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-none line-clamp-2">
+              <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-tight line-clamp-2">
                 {item.title}
               </h1>
             </div>

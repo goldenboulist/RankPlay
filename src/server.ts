@@ -44,11 +44,19 @@ async function handleUpload(request: Request): Promise<Response> {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const base = path.basename(file.name, path.extname(file.name)).replace(/[^a-zA-Z0-9-]/g, "_").slice(0, 150);
-    const filename = `${Date.now()}-${base}${ext}`;
-    const filepath = path.join(UPLOADS_DIR, filename);
+    await fs.mkdir(UPLOADS_DIR, { recursive: true });
 
-    await fs.mkdir(path.dirname(filepath), { recursive: true });
-    await fs.writeFile(filepath, buffer);
+    // "wx" fails instead of overwriting: never replace an existing track
+    let filename = "";
+    for (let attempt = 0; ; attempt++) {
+      filename = `${Date.now()}${attempt ? `-${attempt}` : ""}-${base}${ext}`;
+      try {
+        await fs.writeFile(path.join(UPLOADS_DIR, filename), buffer, { flag: "wx" });
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST" || attempt >= 5) throw e;
+      }
+    }
 
     return new Response(JSON.stringify({ url: `/uploads/${filename}` }), {
       headers: { "content-type": "application/json" },

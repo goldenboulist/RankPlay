@@ -41,3 +41,20 @@ export const getSteamGameDetails = createServerFn({ method: "GET" })
     if (!details) throw new Error("Game not found on Steam");
     return details;
   });
+
+// ── Every Steam user tag, most used first (for the Discover tag picker) ───────
+let tagsCache: { at: number; tags: string[] } | null = null;
+
+export const listSteamTags = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => {
+    if (tagsCache && Date.now() - tagsCache.at < 24 * 60 * 60 * 1000)
+      return tagsCache.tags;
+    const res = await fetch(
+      "https://store.steampowered.com/tagdata/populartags/english",
+    );
+    if (!res.ok) throw new Error("Steam tags unavailable");
+    const json = (await res.json()) as { name: string }[];
+    tagsCache = { at: Date.now(), tags: json.map((t) => t.name) };
+    return tagsCache.tags;
+  });

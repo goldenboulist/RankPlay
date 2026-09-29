@@ -31,7 +31,12 @@ export default defineConfig(({ command }) => ({
         },
       },
     }),
-    ...(command === "build" ? [nitro({ preset: "node-server" })] : []),
+    ...(command === "build" ? [nitro({
+      preset: "node-server",
+      // Uploads are served at runtime by src/server.ts from UPLOADS_DIR; bundling
+      // them would bake stale entries into the static manifest (500 if missing).
+      ignore: ["uploads/**", "**/uploads/**"],
+    })] : []),
     viteReact(),
   ],
 }));

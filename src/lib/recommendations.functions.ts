@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getDb } from "@/lib/db.server";
 import { computeOverall } from "@/lib/scoring";
@@ -11,7 +12,8 @@ import type {
 } from "@/integrations/supabase/types";
 
 // Recommendations come from Steam user tags (via SteamSpy, no key needed):
-// 1. build a taste profile from the tags of your best-rated / most-played games,
+// 1. build a taste profile from the tags of your best-rated / most-played games
+//    (or of the games picked on the Discover page),
 // 2. pull every Steam game carrying your most characteristic tags,
 // 3. rank them by tag overlap × review quality, minus what you already have,
 // 4. re-check the best ones against their own top tags and genre — players
@@ -109,6 +111,32 @@ const PROFILE_TAGS = 6;
 const TAGS_PER_GAME = 12;
 const MIN_REVIEWS = 500;
 const MIN_POSITIVE_RATIO = 0.75;
+const RESULT_COUNT = 24;
+// "Surprise me" digs deeper into the taste profile
+const EXPLORE_PROFILE_TAGS = 10;
+// Hidden gems: little-known but near-unanimously loved
+const GEM_MIN_REVIEWS = 300;
+const GEM_MAX_REVIEWS = 5_000;
+const GEM_MIN_RATIO = 0.95;
+
+const filtersInput = z.object({
+  seedIds: z.array(z.string().uuid()).max(SEED_COUNT).optional(),
+  /** Tags every recommendation must have */
+  include: z.array(z.string().trim().min(1).max(60)).max(5).optional(),
+  /** Tags no recommendation may have among its defining tags */
+  exclude: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  /** US dollars, 0 = free games only */
+  maxPrice: z.number().min(0).max(1000).optional(),
+  minReviews: z.number().int().min(0).max(1_000_000).optional(),
+  /** Earliest release year */
+  since: z.number().int().min(1980).max(2100).optional(),
+  deck: z.enum(["playable", "verified"]).optional(),
+  /** familiar = several shared tags; surprise = one shared tag, shuffled; none = balanced */
+  explore: z.enum(["familiar", "surprise"]).optional(),
+  /** Only little-known games with near-perfect reviews (replaces minReviews) */
+  gems: z.boolean().optional(),
+});
+export type RecommendationFilters = z.infer<typeof filtersInput>;
 
 export type Recommendation = {
   appId: number;
@@ -117,6 +145,8 @@ export type Recommendation = {
   fallbackCover: string;
   positiveRatio: number;
   reviews: number;
+  /** US cents, null when unknown */
+  price: number | null;
   matchedTags: string[];
   because: string[];
 };
@@ -126,6 +156,7 @@ type TagEntry = {
   name: string;
   positive: number;
   negative: number;
+  price: number | null;
 };
 
 // Tag lists are a few MB each and change slowly: keep them for a day
@@ -139,14 +170,19 @@ async function getTagList(tag: string): Promise<TagEntry[]> {
     `${STEAMSPY}?request=tag&tag=${encodeURIComponent(tag)}`,
   );
   if (!res.ok) throw new Error("SteamSpy unavailable");
-  const json = (await res.json()) as Record<string, TagEntry>;
+  const json = (await res.json()) as Record<
+    string,
+    Omit<TagEntry, "price"> & { price?: string | null }
+  >;
   // Keep only what ranking needs so the cache stays small
   const games = Object.values(json).map(
-    ({ appid, name, positive, negative }) => ({
+    ({ appid, name, positive, negative, price }) => ({
       appid,
       name,
       positive,
       negative,
+      // SteamSpy sends the current US price in cents, as a string
+      price: price == null || price === "" ? null : Number(price),
     }),
   );
   tagListCache.set(tag, { at: Date.now(), games });
@@ -177,6 +213,49 @@ async function getAppInfo(appId: number): Promise<AppInfo> {
   return info;
 }
 
+// Release year and Steam Deck rating are only fetched when a filter needs them
+type StoreInfo = { year: number | null; comingSoon: boolean };
+const storeInfoCache = new Map<number, { at: number; info: StoreInfo }>();
+
+async function getStoreInfo(appId: number): Promise<StoreInfo> {
+  const hit = storeInfoCache.get(appId);
+  if (hit && Date.now() - hit.at < 7 * DAY) return hit.info;
+  const res = await fetch(
+    `${STORE}/appdetails?appids=${appId}&filters=release_date`,
+  );
+  if (!res.ok) return { year: null, comingSoon: false };
+  const json = (await res.json()) as Record<
+    string,
+    { data?: { release_date?: { coming_soon?: boolean; date?: string } } }
+  >;
+  const date = json[String(appId)]?.data?.release_date;
+  const year = date?.date?.match(/\d{4}/)?.[0];
+  const info = {
+    year: year ? Number(year) : null,
+    comingSoon: date?.coming_soon ?? false,
+  };
+  storeInfoCache.set(appId, { at: Date.now(), info });
+  return info;
+}
+
+// Steam's categories: 3 = Verified, 2 = Playable, 1 = Unsupported, 0 = Unknown
+const deckCache = new Map<number, { at: number; category: number }>();
+
+async function getDeckCategory(appId: number): Promise<number> {
+  const hit = deckCache.get(appId);
+  if (hit && Date.now() - hit.at < 7 * DAY) return hit.category;
+  const res = await fetch(
+    `https://store.steampowered.com/saleaction/ajaxgetdeckappcompatibilityreport?nAppID=${appId}`,
+  );
+  if (!res.ok) return 0;
+  const json = (await res.json()) as {
+    results?: { resolved_category?: number };
+  };
+  const category = json.results?.resolved_category ?? 0;
+  deckCache.set(appId, { at: Date.now(), category });
+  return category;
+}
+
 async function inBatches<T>(
   items: T[],
   size: number,
@@ -200,7 +279,19 @@ async function findSteamAppId(title: string): Promise<number | null> {
 
 export const getRecommendations = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
+  .validator((d: RecommendationFilters | undefined) =>
+    filtersInput.parse(d ?? {}),
+  )
+  .handler(async ({ data, context }) => {
+    const include = data.include ?? [];
+    const exclude = new Set(data.exclude ?? []);
+    const minReviews = data.gems
+      ? GEM_MIN_REVIEWS
+      : (data.minReviews ?? MIN_REVIEWS);
+    const maxReviews = data.gems ? GEM_MAX_REVIEWS : Infinity;
+    const minRatio = data.gems ? GEM_MIN_RATIO : MIN_POSITIVE_RATIO;
+    const surprise = data.explore === "surprise";
+    const familiar = data.explore === "familiar";
     const db = getDb();
     const [[gameRows], [ratingRows], [catRows]] = await Promise.all([
       db.execute("SELECT * FROM games WHERE user_id = ?", [context.userId]),
@@ -213,24 +304,31 @@ export const getRecommendations = createServerFn({ method: "GET" })
     const ratings = ratingRows as DbRating[];
     const categories = catRows as DbCategory[];
 
-    // ── 1. Seeds: best-rated games, then most-played ones as a fallback ──
-    const scored = games
-      .filter((g) => g.status !== "backlog" && g.status !== "dropped")
-      .map((g) => {
-        const overall = computeOverall(g.id, ratings, categories);
-        const hours = Number(g.hours_played ?? 0);
-        // A 10/10 weighs 5, a 6/10 weighs 1; unrated games count by playtime
-        const weight =
-          overall !== null
-            ? Math.max(0, overall - 5)
-            : Math.min(2, Math.log10(1 + hours));
-        return { game: g, weight };
-      })
-      .filter((s) => s.weight > 0)
-      .sort((a, b) => b.weight - a.weight)
-      .slice(0, SEED_COUNT);
+    // ── 1. Seeds: the games picked by the user, or else the best-rated games,
+    //       then most-played ones as a fallback ──
+    const picked = new Set(data.seedIds ?? []);
+    const scored = picked.size
+      ? games
+          .filter((g) => picked.has(g.id))
+          .map((g) => ({ game: g, weight: 1 }))
+      : games
+          .filter((g) => g.status !== "backlog" && g.status !== "dropped")
+          .map((g) => {
+            const overall = computeOverall(g.id, ratings, categories);
+            const hours = Number(g.hours_played ?? 0);
+            // A 10/10 weighs 5, a 6/10 weighs 1; unrated games count by playtime
+            const weight =
+              overall !== null
+                ? Math.max(0, overall - 5)
+                : Math.min(2, Math.log10(1 + hours));
+            return { game: g, weight };
+          })
+          .filter((s) => s.weight > 0)
+          .sort((a, b) => b.weight - a.weight)
+          .slice(0, SEED_COUNT);
 
-    if (scored.length === 0) {
+    // Required tags are enough to search on, even without any seed game
+    if (scored.length === 0 && include.length === 0) {
       return {
         recommendations: [] as Recommendation[],
         basedOn: [] as string[],
@@ -283,15 +381,20 @@ export const getRecommendations = createServerFn({ method: "GET" })
     const profile = new Map<string, number>();
     for (const s of seeds) {
       s.tags.forEach((tag, i) => {
-        if (GENERIC_TAGS.has(tag)) return;
+        if (GENERIC_TAGS.has(tag) || exclude.has(tag)) return;
         const rankWeight = (TAGS_PER_GAME - i) / TAGS_PER_GAME;
         profile.set(tag, (profile.get(tag) ?? 0) + s.weight * rankWeight);
       });
     }
-    const topTags = [...profile.entries()]
+    const profileTags = [...profile.entries()]
       .sort((a, b) => b[1] - a[1])
-      .slice(0, PROFILE_TAGS)
+      .filter(([t]) => !include.includes(t))
+      .slice(0, surprise ? EXPLORE_PROFILE_TAGS : PROFILE_TAGS)
       .map(([t]) => t);
+    // Required tags weigh as much as the strongest taste tag, even generic ones
+    const strongest = Math.max(1, ...profile.values());
+    for (const t of include) profile.set(t, strongest);
+    const topTags = [...include, ...profileTags];
 
     // ── 4. Candidates from each tag list, rarer tags count more (IDF) ──
     const owned = new Set(games.map((g) => g.steam_appid).filter(Boolean));
@@ -321,11 +424,16 @@ export const getRecommendations = createServerFn({ method: "GET" })
     // ── 5. First pass: tag overlap × review quality × (log) popularity ──
     const seen = new Set<string>();
     const shortlist = [...candidates.values()]
-      .filter(({ entry }) => {
+      .filter(({ entry, tags }) => {
         const reviews = entry.positive + entry.negative;
         return (
-          reviews >= MIN_REVIEWS &&
-          entry.positive / reviews >= MIN_POSITIVE_RATIO &&
+          reviews >= minReviews &&
+          reviews <= maxReviews &&
+          reviews > 0 &&
+          entry.positive / reviews >= minRatio &&
+          include.every((t) => tags.includes(t)) &&
+          (data.maxPrice === undefined ||
+            (entry.price !== null && entry.price <= data.maxPrice * 100)) &&
           !owned.has(entry.appid) &&
           !ownedTitles.has(baseTitle(entry.name))
         );
@@ -337,10 +445,13 @@ export const getRecommendations = createServerFn({ method: "GET" })
           ...c,
           reviews,
           ratio,
-          quality: ratio ** 2 * Math.log10(reviews),
+          // Gems are few-review games by design: don't let popularity count
+          quality: data.gems ? ratio ** 4 : ratio ** 2 * Math.log10(reviews),
+          // Surprise favours games sharing a single strong tag over big overlaps
+          overlap: surprise ? c.score / c.tags.length : c.score,
         };
       })
-      .sort((a, b) => b.score * b.quality - a.score * a.quality)
+      .sort((a, b) => b.overlap * b.quality - a.overlap * a.quality)
       // One entry per game, not one per edition
       .filter((c) => {
         const key = baseTitle(c.entry.name);
@@ -359,12 +470,15 @@ export const getRecommendations = createServerFn({ method: "GET" })
       );
     });
 
-    const recommendations: Recommendation[] = shortlist
+    const verified = shortlist
       .flatMap((c) => {
         const info = infos.get(c.entry.appid);
         if (!info || info.tags.length === 0) return [];
         if (info.genres.some((g) => SOFTWARE_GENRES.has(g))) return [];
+        // Asking for a tag or a surprise is a way to step outside your usual genres
         if (
+          include.length === 0 &&
+          !surprise &&
           likedGenres.size > 0 &&
           !info.genres.some((g) => likedGenres.has(g))
         )
@@ -372,18 +486,59 @@ export const getRecommendations = createServerFn({ method: "GET" })
 
         // A profile tag only counts if it's one of the game's defining tags
         const top = info.tags.slice(0, CANDIDATE_TOP_TAGS);
+        if (top.some((t) => exclude.has(t))) return [];
+        // Required tags also have to be defining ones, so troll tags can't sneak in
+        if (!include.every((t) => top.includes(t))) return [];
         const tags = topTags.filter((t) => top.includes(t));
         if (tags.length === 0) return [];
+        // Familiar: only games that look like yours from several angles
+        if (familiar && tags.length < 2) return [];
         const score = tags.reduce(
           (sum, t) =>
             sum +
             (profile.get(t) ?? 0) * (1 - top.indexOf(t) / CANDIDATE_TOP_TAGS),
           0,
         );
-        return [{ ...c, tags, rank: score * c.quality }];
+        const rank = surprise
+          ? // Few shared tags + some randomness, so each refresh digs up new games
+            ((score * c.quality) / tags.length ** 1.5) *
+            (0.6 + Math.random() * 0.8)
+          : score * c.quality;
+        return [{ ...c, tags, rank }];
       })
-      .sort((a, b) => b.rank - a.rank)
-      .slice(0, 24)
+      .sort((a, b) => b.rank - a.rank);
+
+    // ── 7. Store-side filters, checked in rank order until the page is full ──
+    const kept: typeof verified = [];
+    for (
+      let i = 0;
+      i < verified.length && kept.length < RESULT_COUNT;
+      i += 6
+    ) {
+      const batch = verified.slice(i, i + 6);
+      const ok = await Promise.all(
+        batch.map(async (c) => {
+          if (data.since !== undefined) {
+            const store = await getStoreInfo(c.entry.appid).catch(() => null);
+            const recentEnough =
+              store?.comingSoon ||
+              (store?.year != null && store.year >= data.since);
+            if (!recentEnough) return false;
+          }
+          if (data.deck !== undefined) {
+            const category = await getDeckCategory(c.entry.appid).catch(
+              () => 0,
+            );
+            if (category < (data.deck === "verified" ? 3 : 2)) return false;
+          }
+          return true;
+        }),
+      );
+      kept.push(...batch.filter((_, j) => ok[j]));
+    }
+
+    const recommendations: Recommendation[] = kept
+      .slice(0, RESULT_COUNT)
       .map((c) => ({
         appId: c.entry.appid,
         name: c.entry.name,
@@ -391,6 +546,7 @@ export const getRecommendations = createServerFn({ method: "GET" })
         fallbackCover: steamHeader(c.entry.appid),
         positiveRatio: Math.round(c.ratio * 100),
         reviews: c.reviews,
+        price: c.entry.price,
         matchedTags: c.tags,
         // The seeds sharing the most of this game's matched tags
         because: seeds
@@ -407,6 +563,7 @@ export const getRecommendations = createServerFn({ method: "GET" })
     return {
       recommendations,
       basedOn: seeds.map((s) => s.title),
-      tags: topTags,
+      // Taste tags only; required ones come from the filters
+      tags: profileTags,
     };
   });

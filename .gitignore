@@ -2,3 +2,6 @@ node_modules
 .env
 .tanstack
 dist
+# User-uploaded music: lives only on the server, never versioned
+public/uploads/
+.output/public/uploads/
